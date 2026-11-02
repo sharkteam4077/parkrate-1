@@ -1,7 +1,6 @@
 import express from 'express';
-import cors from 'cors';
 import path from 'node:path';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 
@@ -11,11 +10,77 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, service: 'HR Manager' }));
+
+// Администратор задаётся только через переменные окружения Railway.
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || '';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
+const SESSION_COOKIE = 'hr_manager_session';
+const SESSION_TTL_SECONDS = 8 * 60 * 60;
+if (!ADMIN_USERNAME || !ADMIN_PASSWORD || SESSION_SECRET.length < 32) {
+  console.error('Set ADMIN_USERNAME, ADMIN_PASSWORD and SESSION_SECRET (at least 32 characters) in environment variables.');
+  process.exit(1);
+}
+const loginAttempts = new Map();
+const sign = value => createHmac('sha256', SESSION_SECRET).update(value).digest('base64url');
+const makeSession = () => {
+  const payload = Buffer.from(JSON.stringify({ sub: ADMIN_USERNAME, exp: Math.floor(Date.now()/1000) + SESSION_TTL_SECONDS, nonce: randomBytes(12).toString('hex') })).toString('base64url');
+  return `${payload}.${sign(payload)}`;
+};
+const validSession = token => {
+  if (!token || typeof token !== 'string') return false;
+  const parts = token.split('.'); if (parts.length !== 2) return false;
+  const expected = Buffer.from(sign(parts[0])); const supplied = Buffer.from(parts[1]);
+  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return false;
+  try { const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString()); return payload.sub === ADMIN_USERNAME && payload.exp > Math.floor(Date.now()/1000); } catch { return false; }
+};
+const getCookie = (req, name) => (req.headers.cookie || '').split(';').map(x => x.trim()).find(x => x.startsWith(`${name}=`))?.slice(name.length + 1);
+const sameOrigin = (req, res, next) => {
+  const origin = req.get('origin');
+  if (origin) {
+    try { const parsed = new URL(origin); if (parsed.host !== req.get('host')) return res.status(403).json({ error: 'Запрос отклонён: неверный источник' }); }
+    catch { return res.status(403).json({ error: 'Запрос отклонён' }); }
+  }
+  next();
+};
+app.post('/api/auth/login', sameOrigin, (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const attempt = loginAttempts.get(ip) || { count: 0, until: 0 };
+  if (attempt.until > Date.now()) return res.status(429).json({ error: 'Слишком много попыток. Подождите 15 минут.' });
+  const username = Buffer.from(String(req.body.username || ''));
+  const password = Buffer.from(String(req.body.password || ''));
+  const expectedUser = Buffer.from(ADMIN_USERNAME); const expectedPass = Buffer.from(ADMIN_PASSWORD);
+  const userOk = username.length === expectedUser.length && timingSafeEqual(username, expectedUser);
+  const passOk = password.length === expectedPass.length && timingSafeEqual(password, expectedPass);
+  if (!userOk || !passOk) {
+    attempt.count += 1;
+    if (attempt.count >= 8) { attempt.count = 0; attempt.until = Date.now() + 15 * 60 * 1000; }
+    loginAttempts.set(ip, attempt);
+    return res.status(401).json({ error: 'Неверный логин или пароль' });
+  }
+  loginAttempts.delete(ip);
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${makeSession()}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL_SECONDS}${req.secure || process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+  res.json({ ok: true, username: ADMIN_USERNAME });
+});
+app.get('/api/auth/me', (req, res) => {
+  if (!validSession(getCookie(req, SESSION_COOKIE))) return res.status(401).json({ authenticated: false });
+  res.json({ authenticated: true, username: ADMIN_USERNAME });
+});
+app.post('/api/auth/logout', sameOrigin, (req, res) => {
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${req.secure || process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+  res.json({ ok: true });
+});
+// Всё административное API закрыто. Публичными остаются только анкеты по приглашению.
+app.use('/api', (req, res, next) => {
+  if (req.path === '/health' || req.path.startsWith('/auth/') || req.path.startsWith('/public/')) return next();
+  if (!validSession(getCookie(req, SESSION_COOKIE))) return res.status(401).json({ error: 'Требуется авторизация' });
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return sameOrigin(req, res, next);
+  next();
+});
 const hashToken = token => createHash('sha256').update(token).digest('hex');
 const cleanText = value => String(value || '').trim();
 

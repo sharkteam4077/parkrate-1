@@ -4,7 +4,7 @@ import { Activity, Building2, CalendarDays, ChevronDown, CircleDollarSign, Clock
 import './style.css';
 
 const api = async (url, options={}) => {
-  const res = await fetch('/api'+url, { headers: { 'Content-Type':'application/json' }, ...options });
+  const res = await fetch('/api'+url, { credentials: 'same-origin', headers: { 'Content-Type':'application/json' }, ...options });
   const data = await res.json().catch(()=>({}));
   if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
   return data;
@@ -12,7 +12,7 @@ const api = async (url, options={}) => {
 const money = n => new Intl.NumberFormat('ru-RU',{style:'currency',currency:'RUB',maximumFractionDigits:0}).format(Number(n||0));
 const dateText = d => d ? new Date(d).toLocaleDateString('ru-RU') : '—';
 
-function App(){
+function App({onLogout}){
   const [page,setPage]=useState('overview'); const [mobileOpen,setMobileOpen]=useState(false);
   const [summary,setSummary]=useState({employees:0,branches:0,shifts:0,payroll:0});
   const [employees,setEmployees]=useState([]); const [branches,setBranches]=useState([]); const [types,setTypes]=useState([]); const [shifts,setShifts]=useState([]); const [applications,setApplications]=useState([]); const [invites,setInvites]=useState([]); const [inviteUrl,setInviteUrl]=useState('');
@@ -43,11 +43,11 @@ function App(){
       <div className="brand"><div className="brand-mark"><Activity size={21}/></div><div><b>HR Manager</b><small>Управление персоналом</small></div><button className="mobile-close" onClick={()=>setMobileOpen(false)}><X/></button></div>
       <div className="nav-caption">РАБОЧЕЕ ПРОСТРАНСТВО</div>
       <nav>{nav.map(([id,label,Icon])=><button key={id} className={`nav-item ${page===id?'active':''}`} onClick={()=>{setPage(id);setMobileOpen(false);}}><Icon size={18}/><span>{label}</span>{id==='employees'&&<em>{employees.length}</em>}</button>)}</nav>
-      <div className="sidebar-bottom"><div className="workspace"><div className="workspace-icon"><Building2 size={17}/></div><div><b>Предприятие</b><small>Все филиалы</small></div><ChevronDown size={15}/></div><div className="profile-mini"><div className="avatar">РУ</div><div><b>Руководитель</b><small>Демонстрационный режим</small></div><Settings size={17}/></div></div>
+      <div className="sidebar-bottom"><div className="workspace"><div className="workspace-icon"><Building2 size={17}/></div><div><b>Предприятие</b><small>Все филиалы</small></div><ChevronDown size={15}/></div><div className="profile-mini"><div className="avatar">РУ</div><div><b>Руководитель</b><small>Главный руководитель</small></div><Settings size={17}/></div></div>
     </aside>
     {mobileOpen&&<div className="scrim" onClick={()=>setMobileOpen(false)}/>}
     <main className="main-area">
-      <header className="topbar"><button className="menu-btn" onClick={()=>setMobileOpen(true)}><Menu/></button><div className="breadcrumbs">Рабочее пространство <span>/</span> <b>{title}</b></div><div className="top-actions"><div className="status-dot"><i/>Система активна</div><button className="icon-btn" title="Тёмная тема"><Moon size={18}/></button><div className="avatar">РУ</div></div></header>
+      <header className="topbar"><button className="menu-btn" onClick={()=>setMobileOpen(true)}><Menu/></button><div className="breadcrumbs">Рабочее пространство <span>/</span> <b>{title}</b></div><div className="top-actions"><div className="status-dot"><i/>Система активна</div><button className="icon-btn" title="Тёмная тема"><Moon size={18}/></button><button className="logout-btn" onClick={onLogout}>Выйти</button></div></header>
       <div className="content">
         <div className="page-heading"><div><div className="eyebrow">ПАНЕЛЬ УПРАВЛЕНИЯ</div><h1>{page==='overview'?'Добро пожаловать':title}</h1><p>{page==='overview'?'Общая информация о персонале и работе предприятия.':'Управляйте данными и операциями предприятия.'}</p></div><div className="heading-actions">{page==='employees'&&<button className="primary-btn" onClick={()=>{setInviteForm({branchId:branches[0]?.id||'',daysValid:'30'});setModal('invite')}}><Link2 size={17}/> Пригласить сотрудников</button>}{page==='shifts'&&<button className="primary-btn" onClick={()=>{setShiftForm({...shiftForm,employeeId:employees[0]?.id||'',shiftTypeId:types[0]?.id||''});setModal('shift')}}><Plus size={17}/> Отметить смену</button>}</div></div>
         {error&&<div className="alert"><span>{error}</span><button onClick={()=>setError('')}><X size={16}/></button></div>}
@@ -68,7 +68,7 @@ function App(){
         {page==='shifts'&&<section className="panel"><div className="panel-head"><div><h2>Журнал смен</h2><p>Фактически отработанные смены, отмеченные руководителем</p></div><button className="secondary-btn" onClick={()=>setModal('type')}><Plus size={16}/> Тип смены</button></div><ShiftTable shifts={shifts}/>{shifts.length===0&&<div className="empty">Смен пока нет. Добавьте типы смен, задайте сотрудникам ставки и отметьте выход.</div>}</section>}
         {page==='payroll'&&<section className="panel"><div className="panel-head"><div><h2>Начисления</h2><p>Начисленная зарплата по подтверждённым сменам · RUB</p></div><button className="secondary-btn" onClick={()=>setPage('shifts')}><CalendarDays size={16}/> Журнал смен</button></div><div className="payroll-summary"><span>Начислено за текущий месяц</span><strong>{money(summary.payroll)}</strong><small>{summary.shifts} смен · {summary.employees} действующих сотрудников</small></div><div className="table-wrap"><table><thead><tr><th>СОТРУДНИК</th><th>ФИЛИАЛ</th><th>СМЕН</th><th>НАЧИСЛЕНО</th></tr></thead><tbody>{Object.values(shifts.reduce((acc,s)=>{const id=s.employeeId;acc[id]??={name:s.employee?.fullName,branch:s.employee?.branch?.name,count:0,total:0};acc[id].count++;acc[id].total+=Number(s.amount);return acc;},{})).map((r,i)=><tr key={i}><td><b>{r.name}</b></td><td>{r.branch}</td><td>{r.count}</td><td className="amount">{money(r.total)}</td></tr>)}</tbody></table></div><div className="footnote">Суммы рассчитываются по ставке, сохранённой в момент регистрации каждой смены. Это предварительный управленческий учёт, не бухгалтерская/налоговая ведомость.</div></section>}
       </div>
-      <footer>HR Manager <span>•</span> Первая рабочая версия <span>•</span> Валюта: российский рубль</footer>
+      <footer>HR Manager <span>•</span> Версия 1.2.0 <span>•</span> Валюта: российский рубль</footer>
     </main>
     {modal&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setModal('')}}><div className="modal"><div className="modal-head"><div><h2>{({employee:'Новый сотрудник',branch:'Новый филиал',type:'Новый тип смены',rate:'Индивидуальная ставка',shift:'Регистрация смены',invite:'Приглашение сотрудников',inviteResult:'Ссылка для анкеты'})[modal]}</h2><p>Заполните необходимые поля</p></div><button className="icon-btn" onClick={()=>setModal('')}><X/></button></div>
       {modal==='invite'&&<div className="form-grid"><div className="info-box full">Сотрудник откроет ссылку, заполнит анкету, а вы сможете проверить и принять её в разделе «Анкеты».</div><label className="full">Филиал<select value={inviteForm.branchId} onChange={e=>setInviteForm({...inviteForm,branchId:e.target.value})}>{branches.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></label><label className="full">Срок действия ссылки<select value={inviteForm.daysValid} onChange={e=>setInviteForm({...inviteForm,daysValid:e.target.value})}><option value="7">7 дней</option><option value="14">14 дней</option><option value="30">30 дней</option><option value="60">60 дней</option><option value="90">90 дней</option></select></label>{!branches.length&&<p className="form-hint full">Сначала создайте филиал.</p>}</div>}
@@ -94,6 +94,20 @@ function EmployeeApplicationPage({token}) {
 function Stat({icon:Icon,label,value,note,tone}){return <div className="stat-card"><div className={`stat-icon ${tone}`}><Icon size={20}/></div><div className="stat-label">{label}</div><div className="stat-value">{value}</div><div className="stat-note">{note}</div></div>}
 function ShiftTable({shifts}){return <div className="table-wrap"><table><thead><tr><th>СОТРУДНИК</th><th>ТИП СМЕНЫ</th><th>ДАТА</th><th>ВРЕМЯ</th><th>НАЧИСЛЕНО</th></tr></thead><tbody>{shifts.map(s=><tr key={s.id}><td><b>{s.employee?.fullName||'—'}</b><small className="subline">{s.employee?.branch?.name||''}</small></td><td>{s.shiftType?.name||'—'}</td><td>{dateText(s.workDate)}</td><td>{s.startedAt&&s.endedAt?`${s.startedAt}–${s.endedAt}`:'Не указано'}</td><td className="amount">{money(s.amount)}</td></tr>)}</tbody></table></div>}
 
-function Root(){ return window.location.pathname.startsWith('/anketa/') ? <EmployeeApplicationPage token={window.location.pathname.split('/')[2]||''}/> : <App/>; }
+function LoginPage({onLogin}) {
+  const [username,setUsername]=useState(''); const [password,setPassword]=useState('');
+  const [error,setError]=useState(''); const [busy,setBusy]=useState(false);
+  const submit=async e=>{e.preventDefault();setBusy(true);setError('');try{await api('/auth/login',{method:'POST',body:JSON.stringify({username,password})});onLogin();}catch(err){setError(err.message);}finally{setBusy(false);}};
+  return <div className="login-shell"><form className="login-card" onSubmit={submit}><div className="application-brand"><div className="brand-mark"><Activity size={22}/></div><div><b>HR Manager</b><small>Панель руководителя</small></div></div><div className="application-heading"><span className="eyebrow">ЗАЩИЩЁННЫЙ ДОСТУП</span><h1>Вход в систему</h1><p>Введите логин и пароль руководителя.</p></div>{error&&<div className="alert">{error}</div>}<label>Логин<input autoComplete="username" required value={username} onChange={e=>setUsername(e.target.value)} placeholder="Логин"/></label><label>Пароль<input type="password" autoComplete="current-password" required value={password} onChange={e=>setPassword(e.target.value)} placeholder="Пароль"/></label><button className="primary-btn application-submit" disabled={busy}>{busy?'Вход...':'Войти'}</button></form><div className="application-footer">HR Manager · Доступ только для руководителя</div></div>;
+}
+function AuthGate(){
+  const [auth,setAuth]=useState('checking');
+  const check=()=>api('/auth/me').then(()=>setAuth('yes')).catch(()=>setAuth('no'));
+  useEffect(()=>{check();},[]);
+  const logout=async()=>{try{await api('/auth/logout',{method:'POST'});}finally{setAuth('no');}};
+  if(auth==='checking') return <div className="login-shell"><div className="login-loading">Проверка доступа...</div></div>;
+  return auth==='yes'?<App onLogout={logout}/>:<LoginPage onLogin={()=>setAuth('yes')}/>;
+}
+function Root(){ return window.location.pathname.startsWith('/anketa/') ? <EmployeeApplicationPage token={window.location.pathname.split('/')[2]||''}/> : <AuthGate/>; }
 
 createRoot(document.getElementById('root')).render(<Root/>);
