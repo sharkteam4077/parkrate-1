@@ -33,7 +33,7 @@ model Employee {
   branch      Branch         @relation(fields: [branchId], references: [id])
   rates       EmployeeRate[]
   shifts      Shift[]
-  setupTokens EmployeeSetupToken[]
+  activation  EmployeeActivation?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 }
@@ -102,12 +102,11 @@ model EmployeeApplication {
 }
 
 
-model EmployeeSetupToken {
+model EmployeeActivation {
   id        String   @id @default(cuid())
-  tokenHash String   @unique
-  employeeId String
+  employeeId String @unique
   employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
   expiresAt DateTime
-  usedAt    DateTime?
   createdAt DateTime @default(now())
 }
