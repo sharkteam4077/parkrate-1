@@ -13,6 +13,8 @@ model Branch {
   address   String?
   active    Boolean    @default(true)
   employees Employee[]
+  invites   EmployeeInvite[]
+  applications EmployeeApplication[]
   createdAt DateTime   @default(now())
 }
 
@@ -65,4 +67,33 @@ model Shift {
   employee      Employee  @relation(fields: [employeeId], references: [id])
   shiftType     ShiftType @relation(fields: [shiftTypeId], references: [id])
   createdAt     DateTime  @default(now())
+}
+
+
+model EmployeeInvite {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  active    Boolean  @default(true)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  applications EmployeeApplication[]
+}
+
+model EmployeeApplication {
+  id        String   @id @default(cuid())
+  inviteId  String
+  invite    EmployeeInvite @relation(fields: [inviteId], references: [id], onDelete: Cascade)
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  fullName  String
+  phone     String
+  birthDate DateTime?
+  position  String?
+  hireDate  DateTime?
+  notes     String?
+  status    String   @default("На проверке")
+  reviewedAt DateTime?
+  createdAt DateTime @default(now())
 }

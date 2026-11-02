@@ -1,11 +1,14 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 const app = express();
+// Railway terminates HTTPS at its proxy; trust forwarded headers so invite links use https.
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 app.use(cors());
@@ -13,6 +16,70 @@ app.use(express.json());
 const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, service: 'HR Manager' }));
+const hashToken = token => createHash('sha256').update(token).digest('hex');
+const cleanText = value => String(value || '').trim();
+
+// Руководитель создаёт ссылку для самостоятельного заполнения анкеты.
+app.post('/api/invites', asyncRoute(async (req, res) => {
+  const branchId = cleanText(req.body.branchId);
+  const days = Math.min(90, Math.max(1, Number(req.body.daysValid) || 30));
+  if (!branchId) return res.status(400).json({ error: 'Выберите филиал' });
+  const branch = await prisma.branch.findUnique({ where: { id: branchId } });
+  if (!branch || !branch.active) return res.status(404).json({ error: 'Филиал не найден или отключён' });
+  const token = randomBytes(32).toString('base64url');
+  const invite = await prisma.employeeInvite.create({ data: {
+    tokenHash: hashToken(token), branchId,
+    expiresAt: new Date(Date.now() + days * 24 * 60 * 60 * 1000)
+  }, include: { branch: true } });
+  res.status(201).json({ id: invite.id, branch: invite.branch.name, expiresAt: invite.expiresAt, url: `${req.protocol}://${req.get('host')}/anketa/${token}` });
+}));
+
+app.get('/api/public/invites/:token', asyncRoute(async (req, res) => {
+  const invite = await prisma.employeeInvite.findUnique({ where: { tokenHash: hashToken(req.params.token) }, include: { branch: true } });
+  if (!invite || !invite.active || invite.expiresAt <= new Date() || !invite.branch.active) return res.status(404).json({ error: 'Ссылка недействительна или срок её действия истёк' });
+  res.json({ branch: invite.branch.name, expiresAt: invite.expiresAt });
+}));
+
+app.post('/api/public/invites/:token/applications', asyncRoute(async (req, res) => {
+  const invite = await prisma.employeeInvite.findUnique({ where: { tokenHash: hashToken(req.params.token) }, include: { branch: true } });
+  if (!invite || !invite.active || invite.expiresAt <= new Date() || !invite.branch.active) return res.status(404).json({ error: 'Ссылка недействительна или срок её действия истёк' });
+  const fullName = cleanText(req.body.fullName);
+  const phone = cleanText(req.body.phone);
+  if (fullName.length < 3 || phone.length < 5) return res.status(400).json({ error: 'Укажите ФИО и корректный номер телефона' });
+  const application = await prisma.employeeApplication.create({ data: {
+    inviteId: invite.id, branchId: invite.branchId, fullName, phone,
+    birthDate: req.body.birthDate ? new Date(req.body.birthDate) : null,
+    position: cleanText(req.body.position) || null,
+    hireDate: req.body.hireDate ? new Date(req.body.hireDate) : null,
+    notes: cleanText(req.body.notes) || null
+  } });
+  res.status(201).json({ ok: true, id: application.id, message: 'Анкета отправлена руководителю на проверку' });
+}));
+
+app.get('/api/applications', asyncRoute(async (req, res) => res.json(await prisma.employeeApplication.findMany({ include: { branch: true }, orderBy: { createdAt: 'desc' } }))));
+app.get('/api/invites', asyncRoute(async (req, res) => res.json(await prisma.employeeInvite.findMany({ include: { branch: true, _count: { select: { applications: true } } }, orderBy: { createdAt: 'desc' } }))));
+app.patch('/api/applications/:id', asyncRoute(async (req, res) => {
+  const status = cleanText(req.body.status);
+  if (!['Одобрена', 'Отклонена'].includes(status)) return res.status(400).json({ error: 'Неизвестное решение' });
+  const application = await prisma.employeeApplication.findUnique({ where: { id: req.params.id }, include: { branch: true } });
+  if (!application) return res.status(404).json({ error: 'Анкета не найдена' });
+  if (application.status !== 'На проверке') return res.status(409).json({ error: 'Эта анкета уже обработана' });
+  if (status === 'Одобрена') {
+    await prisma.$transaction(async tx => {
+      await tx.employee.create({ data: { fullName: application.fullName, phone: application.phone, birthDate: application.birthDate, position: application.position, hireDate: application.hireDate, notes: application.notes, branchId: application.branchId, status: 'Работает' } });
+      await tx.employeeApplication.update({ where: { id: application.id }, data: { status, reviewedAt: new Date() } });
+    });
+  } else {
+    await prisma.employeeApplication.update({ where: { id: application.id }, data: { status, reviewedAt: new Date() } });
+  }
+  res.json({ ok: true, status });
+}));
+
+app.patch('/api/invites/:id', asyncRoute(async (req, res) => {
+  const invite = await prisma.employeeInvite.update({ where: { id: req.params.id }, data: { active: Boolean(req.body.active) } });
+  res.json(invite);
+}));
+
 app.get('/api/branches', asyncRoute(async (req,res) => res.json(await prisma.branch.findMany({ orderBy: { name: 'asc' } }))));
 app.post('/api/branches', asyncRoute(async (req,res) => {
   const name = String(req.body.name || '').trim(); if (!name) return res.status(400).json({ error: 'Укажите название филиала' });
