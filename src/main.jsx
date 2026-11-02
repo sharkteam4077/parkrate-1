@@ -21,7 +21,7 @@ function App({onLogout}) {
   const [inviteForm,setInviteForm]=useState({branchId:'',daysValid:'30'});
   const [taskForm,setTaskForm]=useState({employeeId:'',title:'',description:'',dueDate:''});
   const load=async()=>{try{const [sm,e,b,t,a,i,ls]=await Promise.all([api('/summary'),api('/employees'),api('/branches'),api('/tasks'),api('/applications'),api('/invites'),api('/location-selections')]);setSummary(sm);setEmployees(e);setBranches(b);setTasks(t);setApplications(a);setInvites(i);setLocationSelections(ls);}catch(e){setError(e.message);}};
-  useEffect(()=>{load();const timer=setInterval(load,30000);return()=>clearInterval(timer);},[]);
+  useEffect(()=>{load();const timer=setInterval(load,300000);return()=>clearInterval(timer);},[]);
   const run=async fn=>{setBusy(true);setError('');try{await fn();await load();setModal('');}catch(e){setError(e.message);}finally{setBusy(false);}};
   const filtered=useMemo(()=>employees.filter(e=>`${e.fullName} ${e.position||''} ${e.branch?.name||''}`.toLowerCase().includes(query.toLowerCase())),[employees,query]);
   const nav=[['overview','Обзор',LayoutDashboard],['tasks','Задания',ClipboardList],['employees','Сотрудники',Users],['applications','Анкеты',FileSpreadsheet],['invites','Приглашения',Link2],['branches','Филиалы',Building2],['location-requests','Выбор объектов',MapPin]];
@@ -91,22 +91,28 @@ function EmployeeLoginPage({onLogin}) {
 function EmployeeCabinet({onLogout}) {
  const [profile,setProfile]=useState(null),[tasks,setTasks]=useState([]),[error,setError]=useState(''),[comments,setComments]=useState({}),[busyId,setBusyId]=useState('');
  const [locations,setLocations]=useState([]),[selections,setSelections]=useState([]),[selected,setSelected]=useState(null);
+ const [workerPosition,setWorkerPosition]=useState(null),[geoStatus,setGeoStatus]=useState('');
  const load=async()=>{try{const [p,t,l,s]=await Promise.all([api('/employee/me'),api('/employee/tasks'),api('/employee/locations'),api('/employee/location-selections')]);setProfile(p);setTasks(t);setLocations(l);setSelections(s);}catch(e){setError(e.message);}};
- useEffect(()=>{load();const timer=setInterval(load,20000);return()=>clearInterval(timer);},[]);
+ useEffect(()=>{load();const timer=setInterval(load,300000);return()=>clearInterval(timer);},[]);
+ const locateWorker=()=>{if(!navigator.geolocation){setGeoStatus('Браузер не поддерживает определение местоположения.');return;}setGeoStatus('Определяем местоположение…');navigator.geolocation.getCurrentPosition(pos=>{setWorkerPosition({latitude:pos.coords.latitude,longitude:pos.coords.longitude});setGeoStatus('Ваше местоположение определено. Ближайшие объекты показаны первыми.');},err=>{setGeoStatus(err.code===1?'Доступ к геолокации запрещён. Разрешите его в настройках браузера.':'Не удалось определить местоположение. Проверьте GPS и подключение.');},{enableHighAccuracy:true,timeout:15000,maximumAge:60000});};
+ const distanceKm=(a,b)=>{const rad=x=>x*Math.PI/180;const dLat=rad(b.latitude-a.latitude),dLon=rad(b.longitude-a.longitude);const q=Math.sin(dLat/2)**2+Math.cos(rad(a.latitude))*Math.cos(rad(b.latitude))*Math.sin(dLon/2)**2;return 6371*2*Math.atan2(Math.sqrt(q),Math.sqrt(1-q));};
+ const nearestLocations=workerPosition?[...locations].map(loc=>({...loc,distanceKm:distanceKm(workerPosition,loc)})).sort((a,b)=>a.distanceKm-b.distanceKm).slice(0,50):locations;
  useEffect(()=>{
   if(!window.L||!document.getElementById('employee-location-map'))return;
-  const map=window.L.map('employee-location-map').setView([55.75,37.62],4);
+  const map=window.L.map('employee-location-map').setView(workerPosition?[workerPosition.latitude,workerPosition.longitude]:[55.75,37.62],workerPosition?10:4);
   window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
   const group=window.L.featureGroup();
-  locations.forEach(loc=>{
+  nearestLocations.forEach(loc=>{
    const color=loc.availability==='Доступен'?'#7968e9':'#858d9d';
    const marker=window.L.circleMarker([loc.latitude,loc.longitude],{radius:5,color,fillColor:color,fillOpacity:.8,weight:1});
-   marker.bindPopup(`<b>${safeMap(loc.city)}</b><br>${safeMap(loc.district)}<br>${safeMap(loc.region)}<br>${loc.availability}`);
+   marker.bindPopup(`<b>${safeMap(loc.city)}</b><br>${safeMap(loc.district)}<br>${safeMap(loc.region)}<br>${loc.availability}${Number.isFinite(loc.distanceKm)?`<br>Расстояние: ${loc.distanceKm.toFixed(1)} км`:''}`);
    marker.on('click',()=>setSelected(loc));marker.addTo(group);
   });
-  group.addTo(map);if(locations.length)map.fitBounds(group.getBounds().pad(.05));
+  group.addTo(map);
+  if(workerPosition){const me=window.L.circleMarker([workerPosition.latitude,workerPosition.longitude],{radius:10,color:'#1687ff',fillColor:'#1687ff',fillOpacity:1,weight:3});me.bindPopup('Вы находитесь здесь').addTo(map);if(group.getLayers().length)map.fitBounds(window.L.featureGroup([me,group]).getBounds().pad(.12));}
+  else if(nearestLocations.length)map.fitBounds(group.getBounds().pad(.05));
   return()=>map.remove();
- },[locations]);
+ },[locations,workerPosition]);
  const updateTask=async(task,status)=>{setBusyId(task.id);try{await api(`/employee/tasks/${task.id}`,{method:'PATCH',body:JSON.stringify({status,employeeComment:comments[task.id]??task.employeeComment??''})});await load();}catch(e){setError(e.message);}finally{setBusyId('');}};
  const choose=async()=>{if(!selected)return;setBusyId('location');setError('');try{await api('/employee/location-selections',{method:'POST',body:JSON.stringify({locationId:selected.id})});setSelected(null);await load();}catch(e){setError(e.message);}finally{setBusyId('');}};
  const pending=selections.filter(x=>x.status==='На проверке'),approved=selections.filter(x=>x.status==='Одобрена'),rejected=selections.filter(x=>x.status==='Отклонена');
@@ -119,8 +125,9 @@ function EmployeeCabinet({onLogout}) {
  {rejected.map(x=><div className="location-notice rejected" key={x.id}><b>Выбор объекта отклонён</b><span>{x.location.city}, {x.location.district||x.location.region}</span><small>{x.adminComment||'Руководитель не согласовал посещение этого объекта.'}</small></div>)}
  {!selections.length&&<div className="empty">Вы ещё не выбирали объект.</div>}</section>
  <section className="panel"><div className="panel-head"><div><h2>Выбрать объект на карте</h2><p>Нажмите на точку, чтобы увидеть объект, затем отправьте запрос на проверку</p></div></div>
+ <div className="inline-actions" style={{marginBottom:12}}><button className="primary-btn" onClick={locateWorker}>Определить моё местоположение</button>{workerPosition&&<span className="employee-footnote">Местоположение определено</span>}</div>{geoStatus&&<div className="location-map-help" role="status">{geoStatus}</div>}
  <div className="location-map-wrap"><div id="employee-location-map" className="employee-location-map"></div></div>
- <div className="location-map-help">{locations.length.toLocaleString('ru-RU')} объектов из Excel · Фиолетовые точки доступны, серые уже ожидают проверки или одобрены</div>
+ <div className="location-map-help">{workerPosition?`Показаны ${nearestLocations.length} ближайших объектов из ${locations.length.toLocaleString('ru-RU')}. Синяя точка — вы; фиолетовые точки доступны, серые уже ожидают проверки или одобрены.`:`${locations.length.toLocaleString('ru-RU')} объектов из Excel · Нажмите «Определить моё местоположение», чтобы найти ближайшие.`}</div>
  {selected&&<div className="selected-location"><div><b>{selected.city||'Объект'}{selected.district?`, ${selected.district}`:''}</b><small>{selected.region} · {selected.latitude.toFixed(5)}, {selected.longitude.toFixed(5)} · {selected.availability}</small></div><button className="primary-btn" disabled={busyId==='location'||selected.availability!=='Доступен'||pending.length>0||approved.length>0} onClick={choose}>{busyId==='location'?'Отправка...':'Отправить на проверку'}</button></div>}
  </section>
  <section className="employee-profile panel"><div className="panel-head"><div><h2>Мои данные</h2><p>Информация из кадровой карточки</p></div><span className="pill success">{profile.status}</span></div><div className="employee-details"><div><small>ФИО</small><b>{profile.fullName}</b></div><div><small>Должность</small><b>{profile.position||'Не указана'}</b></div><div><small>Филиал</small><b>{profile.branch||'—'}</b></div><div><small>Телефон</small><b>{profile.phone||'—'}</b></div><div><small>Дата трудоустройства</small><b>{dateText(profile.hireDate)}</b></div><div><small>Логин</small><b>{profile.login}</b></div></div></section>
