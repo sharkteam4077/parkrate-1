@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'node:path';
 import { createHash, randomBytes, createHmac, timingSafeEqual, scryptSync } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { readFile } from 'node:fs/promises';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -14,6 +15,18 @@ app.use(express.json({ limit: '1mb' }));
 const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, service: 'HR Manager' }));
+let locationsImport;
+async function ensureLocationsImported() {
+  if (!locationsImport) locationsImport = (async () => {
+    const rows = JSON.parse(await readFile(path.join(__dirname, 'data', 'locations.json'), 'utf8'));
+    const count = await prisma.location.count();
+    if (count < rows.length) for (let i=0; i<rows.length; i+=500) {
+      await prisma.location.createMany({ data: rows.slice(i,i+500), skipDuplicates: true });
+    }
+    return rows.length;
+  })().catch(err => { locationsImport = null; throw err; });
+  return locationsImport;
+}
 
 // Администратор задаётся только через переменные окружения Railway.
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || '';
@@ -159,6 +172,30 @@ app.patch('/api/employee/tasks/:id', asyncRoute(async (req, res) => {
   const updated = await prisma.task.update({ where: { id: task.id }, data: { status, employeeComment: cleanText(req.body.employeeComment).slice(0, 2000) || null, completedAt: status === 'Выполнено' ? new Date() : null } });
   res.json(updated);
 }));
+
+app.get('/api/employee/locations', asyncRoute(async (req,res) => {
+  await ensureLocationsImported();
+  const rows = await prisma.location.findMany({ orderBy: [{city:'asc'},{district:'asc'}], take: 7000 });
+  const busy = await prisma.locationSelection.findMany({ where:{status:{in:['На проверке','Одобрена']}}, select:{locationId:true,status:true} });
+  const states = new Map(busy.map(x=>[x.locationId,x.status]));
+  res.json(rows.map(x=>({...x,availability:states.get(x.id)||'Доступен'})));
+}));
+app.get('/api/employee/location-selections', asyncRoute(async (req,res) => {
+  res.json(await prisma.locationSelection.findMany({where:{employeeId:req.employeeId},include:{location:true},orderBy:{createdAt:'desc'}}));
+}));
+app.post('/api/employee/location-selections', asyncRoute(async (req,res) => {
+  const locationId = cleanText(req.body.locationId);
+  if (!locationId) return res.status(400).json({error:'Выберите объект на карте'});
+  const location = await prisma.location.findUnique({where:{id:locationId}});
+  if (!location) return res.status(404).json({error:'Объект не найден'});
+  const previous = await prisma.locationSelection.findFirst({where:{employeeId:req.employeeId,status:{in:['На проверке','Одобрена']}}});
+  if (previous) return res.status(409).json({error:'У вас уже есть запрос на проверке или одобренный объект'});
+  const occupied = await prisma.locationSelection.findFirst({where:{locationId,status:{in:['На проверке','Одобрена']}}});
+  if (occupied) return res.status(409).json({error:'Этот объект уже выбран или ожидает проверки'});
+  const result = await prisma.locationSelection.create({data:{employeeId:req.employeeId,locationId},include:{location:true}});
+  res.status(201).json(result);
+}));
+
 const hashToken = token => createHash('sha256').update(token).digest('hex');
 const cleanText = value => String(value || '').trim();
 
@@ -270,6 +307,23 @@ app.patch('/api/tasks/:id', asyncRoute(async (req, res) => {
   if (!['Новое', 'В работе', 'Выполнено'].includes(status)) return res.status(400).json({ error: 'Недопустимый статус задания' });
   const task = await prisma.task.update({ where: { id: req.params.id }, data: { status, completedAt: status === 'Выполнено' ? new Date() : null }, include: { employee: { include: { branch: true } } } });
   res.json(task);
+}));
+
+
+app.get('/api/location-selections', asyncRoute(async (req,res) => res.json(await prisma.locationSelection.findMany({
+  include:{employee:{include:{branch:true}},location:true},orderBy:[{status:'asc'},{createdAt:'desc'}]
+}))));
+app.patch('/api/location-selections/:id', asyncRoute(async (req,res) => {
+  const status=cleanText(req.body.status);
+  if(!['Одобрена','Отклонена'].includes(status)) return res.status(400).json({error:'Недопустимое решение'});
+  const current=await prisma.locationSelection.findUnique({where:{id:req.params.id}});
+  if(!current) return res.status(404).json({error:'Запрос не найден'});
+  if(current.status!=='На проверке') return res.status(409).json({error:'Запрос уже рассмотрен'});
+  if(status==='Одобрена'){
+    const conflict=await prisma.locationSelection.findFirst({where:{locationId:current.locationId,status:'Одобрена',id:{not:current.id}}});
+    if(conflict) return res.status(409).json({error:'Объект уже одобрен другому сотруднику'});
+  }
+  res.json(await prisma.locationSelection.update({where:{id:current.id},data:{status,adminComment:cleanText(req.body.adminComment).slice(0,1000)||null,reviewedAt:new Date()},include:{employee:{include:{branch:true}},location:true}}));
 }));
 
 app.get('/api/summary', asyncRoute(async (req,res) => {

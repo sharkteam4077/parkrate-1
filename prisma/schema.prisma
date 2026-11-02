@@ -35,6 +35,8 @@ model Employee {
   shifts      Shift[]
   activation  EmployeeActivation?
   tasks       Task[]
+  locationSelections LocationSelection[]
+  locationSelections LocationSelection[]
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 }
@@ -125,4 +127,66 @@ model Task {
   completedAt DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+
+model Location {
+  id        String   @id
+  region    String
+  latitude  Float
+  longitude Float
+  city      String
+  district  String
+  province  String
+  selections LocationSelection[]
+  createdAt DateTime @default(now())
+  @@index([city])
+  @@index([region])
+}
+
+model LocationSelection {
+  id          String   @id @default(cuid())
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  locationId  String
+  location    Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  status      String   @default("На проверке")
+  adminComment String?
+  reviewedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([status, createdAt])
+  @@index([employeeId, status])
+  @@index([locationId, status])
+}
+
+
+model Location {
+  id        String   @id
+  region    String
+  latitude  Float
+  longitude Float
+  city      String
+  district  String
+  province  String
+  selections LocationSelection[]
+  createdAt DateTime @default(now())
+  @@index([city])
+  @@index([region])
+}
+
+model LocationSelection {
+  id           String   @id @default(cuid())
+  employeeId   String
+  employee     Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  locationId   String
+  location     Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  status       String   @default("На проверке")
+  adminComment String?
+  reviewedAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  @@index([status, createdAt])
+  @@index([employeeId, status])
+  @@index([locationId, status])
 }
