@@ -238,6 +238,13 @@ app.post('/api/public/invites/:token/applications', asyncRoute(async (req, res) 
 
 app.get('/api/applications', asyncRoute(async (req, res) => res.json(await prisma.employeeApplication.findMany({ include: { branch: true }, orderBy: { createdAt: 'desc' } }))));
 app.get('/api/invites', asyncRoute(async (req, res) => res.json(await prisma.employeeInvite.findMany({ include: { branch: true, _count: { select: { applications: true } } }, orderBy: { createdAt: 'desc' } }))));
+app.delete('/api/applications/:id', asyncRoute(async (req, res) => {
+  const row = await prisma.employeeApplication.findUnique({ where: { id: req.params.id } });
+  if (!row) return res.status(404).json({ error: 'Анкета не найдена' });
+  if (row.status === 'Одобрена') return res.status(409).json({ error: 'Одобренная анкета связана с созданным сотрудником. Удалите сотрудника отдельно; история анкеты сохранена.' });
+  await prisma.employeeApplication.delete({ where: { id: row.id } });
+  res.json({ ok: true });
+}));
 app.patch('/api/applications/:id', asyncRoute(async (req, res) => {
   const status = cleanText(req.body.status);
   if (!['Одобрена', 'Отклонена'].includes(status)) return res.status(400).json({ error: 'Неизвестное решение' });
@@ -259,6 +266,12 @@ app.patch('/api/applications/:id', asyncRoute(async (req, res) => {
   res.json({ ok: true, status, activationUrl });
 }));
 
+app.delete('/api/invites/:id', asyncRoute(async (req, res) => {
+  const invite = await prisma.employeeInvite.findUnique({ where: { id: req.params.id }, include: { _count: { select: { applications: true } } } });
+  if (!invite) return res.status(404).json({ error: 'Приглашение не найдено' });
+  await prisma.employeeInvite.delete({ where: { id: invite.id } });
+  res.json({ ok: true, deletedApplications: invite._count.applications });
+}));
 app.patch('/api/invites/:id', asyncRoute(async (req, res) => {
   const invite = await prisma.employeeInvite.update({ where: { id: req.params.id }, data: { active: Boolean(req.body.active) } });
   res.json(invite);
@@ -269,6 +282,13 @@ app.post('/api/branches', asyncRoute(async (req,res) => {
   const name = String(req.body.name || '').trim(); const city = String(req.body.city || '').trim(); if (!name) return res.status(400).json({ error: 'Укажите название филиала' });
   if (!city) return res.status(400).json({ error: 'Укажите город филиала' });
   res.status(201).json(await prisma.branch.create({ data: { name, city, address: req.body.address || null } }));
+}));
+app.delete('/api/branches/:id', asyncRoute(async (req,res) => {
+  const branch = await prisma.branch.findUnique({ where: { id: req.params.id }, include: { _count: { select: { employees: true, invites: true, applications: true } } } });
+  if (!branch) return res.status(404).json({ error: 'Филиал не найден' });
+  if (branch._count.employees || branch._count.invites || branch._count.applications) return res.status(409).json({ error: `Нельзя удалить филиал: связанные записи — сотрудники: ${branch._count.employees}, приглашения: ${branch._count.invites}, анкеты: ${branch._count.applications}. Сначала удалите или перенесите их.` });
+  await prisma.branch.delete({ where: { id: branch.id } });
+  res.json({ ok: true });
 }));
 app.patch('/api/branches/:id', asyncRoute(async (req,res) => {
   const city = String(req.body.city || '').trim();
@@ -285,6 +305,15 @@ app.post('/api/employees', asyncRoute(async (req,res) => {
     hireDate: req.body.hireDate ? new Date(req.body.hireDate) : null, notes: req.body.notes || null
   }, include: { branch: true } });
   res.status(201).json(employee);
+}));
+app.delete('/api/employees/:id', asyncRoute(async (req,res) => {
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id } });
+  if (!employee) return res.status(404).json({ error: 'Сотрудник не найден' });
+  await prisma.$transaction(async tx => {
+    await tx.shift.deleteMany({ where: { employeeId: employee.id } });
+    await tx.employee.delete({ where: { id: employee.id } });
+  });
+  res.json({ ok: true });
 }));
 app.patch('/api/employees/:id', asyncRoute(async (req,res) => {
   const allowed = ['fullName','phone','position','status','notes','branchId'];
@@ -308,6 +337,12 @@ app.post('/api/tasks', asyncRoute(async (req, res) => {
   const task = await prisma.task.create({ data: { employeeId, title, description: description || null, dueDate } , include: { employee: { include: { branch: true } } } });
   res.status(201).json(task);
 }));
+app.delete('/api/tasks/:id', asyncRoute(async (req, res) => {
+  const task = await prisma.task.findUnique({ where: { id: req.params.id } });
+  if (!task) return res.status(404).json({ error: 'Задание не найдено' });
+  await prisma.task.delete({ where: { id: task.id } });
+  res.json({ ok: true });
+}));
 app.patch('/api/tasks/:id', asyncRoute(async (req, res) => {
   const status = cleanText(req.body.status);
   if (!['Новое', 'В работе', 'Выполнено'].includes(status)) return res.status(400).json({ error: 'Недопустимый статус задания' });
@@ -319,6 +354,12 @@ app.patch('/api/tasks/:id', asyncRoute(async (req, res) => {
 app.get('/api/location-selections', asyncRoute(async (req,res) => res.json(await prisma.locationSelection.findMany({
   include:{employee:{include:{branch:true}},location:true},orderBy:[{status:'asc'},{createdAt:'desc'}]
 }))));
+app.delete('/api/location-selections/:id', asyncRoute(async (req,res) => {
+  const row = await prisma.locationSelection.findUnique({ where: { id: req.params.id } });
+  if (!row) return res.status(404).json({ error: 'Заявка не найдена' });
+  await prisma.locationSelection.delete({ where: { id: row.id } });
+  res.json({ ok: true });
+}));
 app.patch('/api/location-selections/:id', asyncRoute(async (req,res) => {
   const status=cleanText(req.body.status);
   if(!['Одобрена','Отклонена'].includes(status)) return res.status(400).json({error:'Недопустимое решение'});
