@@ -152,6 +152,33 @@ app.post('/api/invites', asyncRoute(async (req, res) => {
   res.status(201).json({ id: invite.id, branch: invite.branch.name, expiresAt: invite.expiresAt, url: `${req.protocol}://${req.get('host')}/anketa/${token}` });
 }));
 
+// Одноразовая ссылка, по которой сотрудник самостоятельно создаёт учётные данные.
+app.get('/api/public/employee-setup/:token', asyncRoute(async (req, res) => {
+  const setup = await prisma.employeeSetupToken.findUnique({ where: { tokenHash: hashToken(req.params.token) }, include: { employee: { select: { fullName: true } } } });
+  if (!setup || setup.usedAt || setup.expiresAt <= new Date()) return res.status(404).json({ error: 'Ссылка недействительна или срок её действия истёк' });
+  res.json({ fullName: setup.employee.fullName });
+}));
+app.post('/api/public/employee-setup/:token', sameOrigin, asyncRoute(async (req, res) => {
+  const tokenHash = hashToken(req.params.token);
+  const login = cleanText(req.body.login).toLowerCase();
+  const password = String(req.body.password || '');
+  if (!/^[a-z0-9._-]{3,40}$/.test(login)) return res.status(400).json({ error: 'Логин: 3–40 символов, латинские буквы, цифры, точка, дефис или подчёркивание' });
+  if (password.length < 8 || password.length > 128) return res.status(400).json({ error: 'Пароль должен содержать от 8 до 128 символов' });
+  try {
+    await prisma.$transaction(async tx => {
+      const setup = await tx.employeeSetupToken.findUnique({ where: { tokenHash } });
+      if (!setup) throw Object.assign(new Error('Ссылка недействительна или срок её действия истёк'), { status: 410 });
+      const claimed = await tx.employeeSetupToken.updateMany({ where: { id: setup.id, usedAt: null, expiresAt: { gt: new Date() } }, data: { usedAt: new Date() } });
+      if (claimed.count !== 1) throw Object.assign(new Error('Ссылка уже использована или срок её действия истёк'), { status: 410 });
+      const existing = await tx.employee.findUnique({ where: { login } });
+      if (existing && existing.id !== setup.employeeId) throw Object.assign(new Error('Этот логин уже занят'), { status: 409 });
+      await tx.employee.update({ where: { id: setup.employeeId }, data: { login, passwordHash: hashPassword(password) } });
+      await tx.employeeSetupToken.updateMany({ where: { employeeId: setup.employeeId, usedAt: null }, data: { usedAt: new Date() } });
+    });
+  } catch (error) { if (error.status) return res.status(error.status).json({ error: error.message }); throw error; }
+  res.json({ ok: true });
+}));
+
 app.get('/api/public/invites/:token', asyncRoute(async (req, res) => {
   const invite = await prisma.employeeInvite.findUnique({ where: { tokenHash: hashToken(req.params.token) }, include: { branch: true } });
   if (!invite || !invite.active || invite.expiresAt <= new Date() || !invite.branch.active) return res.status(404).json({ error: 'Ссылка недействительна или срок её действия истёк' });
@@ -182,15 +209,19 @@ app.patch('/api/applications/:id', asyncRoute(async (req, res) => {
   const application = await prisma.employeeApplication.findUnique({ where: { id: req.params.id }, include: { branch: true } });
   if (!application) return res.status(404).json({ error: 'Анкета не найдена' });
   if (application.status !== 'На проверке') return res.status(409).json({ error: 'Эта анкета уже обработана' });
+  let setupUrl = null;
   if (status === 'Одобрена') {
+    const token = randomBytes(32).toString('base64url');
     await prisma.$transaction(async tx => {
-      await tx.employee.create({ data: { fullName: application.fullName, phone: application.phone, birthDate: application.birthDate, position: application.position, hireDate: application.hireDate, notes: application.notes, branchId: application.branchId, status: 'Работает' } });
+      const employee = await tx.employee.create({ data: { fullName: application.fullName, phone: application.phone, birthDate: application.birthDate, position: application.position, hireDate: application.hireDate, notes: application.notes, branchId: application.branchId, status: 'Работает' } });
+      await tx.employeeSetupToken.create({ data: { tokenHash: hashToken(token), employeeId: employee.id, expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000) } });
       await tx.employeeApplication.update({ where: { id: application.id }, data: { status, reviewedAt: new Date() } });
     });
+    setupUrl = `${req.protocol}://${req.get('host')}/employee-setup/${token}`;
   } else {
     await prisma.employeeApplication.update({ where: { id: application.id }, data: { status, reviewedAt: new Date() } });
   }
-  res.json({ ok: true, status });
+  res.json({ ok: true, status, setupUrl });
 }));
 
 app.patch('/api/invites/:id', asyncRoute(async (req, res) => {
@@ -220,17 +251,15 @@ app.patch('/api/employees/:id', asyncRoute(async (req,res) => {
   if (req.body.hireDate !== undefined) data.hireDate = req.body.hireDate ? new Date(req.body.hireDate) : null;
   const updated = await prisma.employee.update({ where: { id: req.params.id }, data, include: { branch: true, rates: { include: { shiftType: true } } } }); const { passwordHash, ...safeEmployee } = updated; res.json(safeEmployee);
 }));
-app.post('/api/employees/:id/access', asyncRoute(async (req, res) => {
+app.post('/api/employees/:id/setup-link', asyncRoute(async (req, res) => {
   const employee = await prisma.employee.findUnique({ where: { id: req.params.id } });
   if (!employee) return res.status(404).json({ error: 'Сотрудник не найден' });
-  const login = cleanText(req.body.login).toLowerCase();
-  const password = String(req.body.password || '');
-  if (!/^[a-z0-9._-]{3,40}$/.test(login)) return res.status(400).json({ error: 'Логин: 3–40 символов, латинские буквы, цифры, точка, дефис или подчёркивание' });
-  if (password.length < 8 || password.length > 128) return res.status(400).json({ error: 'Пароль должен содержать от 8 до 128 символов' });
-  const existing = await prisma.employee.findUnique({ where: { login } });
-  if (existing && existing.id !== employee.id) return res.status(409).json({ error: 'Этот логин уже занят' });
-  await prisma.employee.update({ where: { id: employee.id }, data: { login, passwordHash: hashPassword(password) } });
-  res.json({ ok: true, login });
+  const token = randomBytes(32).toString('base64url');
+  await prisma.$transaction([
+    prisma.employeeSetupToken.updateMany({ where: { employeeId: employee.id, usedAt: null }, data: { usedAt: new Date() } }),
+    prisma.employeeSetupToken.create({ data: { tokenHash: hashToken(token), employeeId: employee.id, expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000) } })
+  ]);
+  res.json({ url: `${req.protocol}://${req.get('host')}/employee-setup/${token}` });
 }));
 app.delete('/api/employees/:id/access', asyncRoute(async (req, res) => {
   await prisma.employee.update({ where: { id: req.params.id }, data: { login: null, passwordHash: null } });
