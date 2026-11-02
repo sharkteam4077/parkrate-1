@@ -145,11 +145,19 @@ app.get('/api/employee/me', asyncRoute(async (req, res) => {
   if (!employee || employee.status !== 'Работает' || !employee.login || !employee.passwordHash) return res.status(403).json({ error: 'Доступ к кабинету приостановлен' });
   res.json({ id: employee.id, fullName: employee.fullName, phone: employee.phone, position: employee.position, status: employee.status, hireDate: employee.hireDate, branch: employee.branch?.name, login: employee.login });
 }));
-app.get('/api/employee/shifts', asyncRoute(async (req, res) => {
+app.get('/api/employee/tasks', asyncRoute(async (req, res) => {
   const activeEmployee = await prisma.employee.findUnique({ where: { id: req.employeeId }, select: { status: true, login: true, passwordHash: true } });
   if (!activeEmployee || activeEmployee.status !== 'Работает' || !activeEmployee.login || !activeEmployee.passwordHash) return res.status(403).json({ error: 'Доступ к кабинету приостановлен' });
-  const shifts = await prisma.shift.findMany({ where: { employeeId: req.employeeId }, include: { shiftType: true }, orderBy: { workDate: 'desc' }, take: 250 });
-  res.json(shifts.map(s => ({ id: s.id, workDate: s.workDate, startedAt: s.startedAt, endedAt: s.endedAt, amount: s.amount, comment: s.comment, status: s.status, shiftType: s.shiftType?.name })));
+  const tasks = await prisma.task.findMany({ where: { employeeId: req.employeeId }, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
+  res.json(tasks);
+}));
+app.patch('/api/employee/tasks/:id', asyncRoute(async (req, res) => {
+  const task = await prisma.task.findFirst({ where: { id: req.params.id, employeeId: req.employeeId } });
+  if (!task) return res.status(404).json({ error: 'Задание не найдено' });
+  const status = cleanText(req.body.status);
+  if (!['В работе', 'Выполнено'].includes(status)) return res.status(400).json({ error: 'Недопустимый статус задания' });
+  const updated = await prisma.task.update({ where: { id: task.id }, data: { status, employeeComment: cleanText(req.body.employeeComment).slice(0, 2000) || null, completedAt: status === 'Выполнено' ? new Date() : null } });
+  res.json(updated);
 }));
 const hashToken = token => createHash('sha256').update(token).digest('hex');
 const cleanText = value => String(value || '').trim();
@@ -224,7 +232,7 @@ app.post('/api/branches', asyncRoute(async (req,res) => {
   const name = String(req.body.name || '').trim(); if (!name) return res.status(400).json({ error: 'Укажите название филиала' });
   res.status(201).json(await prisma.branch.create({ data: { name, address: req.body.address || null } }));
 }));
-app.get('/api/employees', asyncRoute(async (req,res) => { const rows = await prisma.employee.findMany({ include: { branch: true, rates: { include: { shiftType: true } } }, orderBy: { fullName: 'asc' } }); res.json(rows.map(({ passwordHash, ...employee }) => employee)); }));
+app.get('/api/employees', asyncRoute(async (req,res) => { const rows = await prisma.employee.findMany({ include: { branch: true }, orderBy: { fullName: 'asc' } }); res.json(rows.map(({ passwordHash, ...employee }) => employee)); }));
 app.post('/api/employees', asyncRoute(async (req,res) => {
   const { fullName, branchId } = req.body;
   if (!String(fullName || '').trim() || !branchId) return res.status(400).json({ error: 'ФИО и филиал обязательны' });
@@ -232,47 +240,46 @@ app.post('/api/employees', asyncRoute(async (req,res) => {
     fullName: String(fullName).trim(), branchId, phone: req.body.phone || null,
     position: req.body.position || null, status: req.body.status || 'Работает',
     hireDate: req.body.hireDate ? new Date(req.body.hireDate) : null, notes: req.body.notes || null
-  }, include: { branch: true, rates: { include: { shiftType: true } } } });
+  }, include: { branch: true } });
   res.status(201).json(employee);
 }));
 app.patch('/api/employees/:id', asyncRoute(async (req,res) => {
   const allowed = ['fullName','phone','position','status','notes','branchId'];
   const data = Object.fromEntries(allowed.filter(k => req.body[k] !== undefined).map(k => [k, req.body[k]]));
   if (req.body.hireDate !== undefined) data.hireDate = req.body.hireDate ? new Date(req.body.hireDate) : null;
-  const updated = await prisma.employee.update({ where: { id: req.params.id }, data, include: { branch: true, rates: { include: { shiftType: true } } } }); const { passwordHash, ...safeEmployee } = updated; res.json(safeEmployee);
+  const updated = await prisma.employee.update({ where: { id: req.params.id }, data, include: { branch: true } }); const { passwordHash, ...safeEmployee } = updated; res.json(safeEmployee);
 }));
-app.get('/api/shift-types', asyncRoute(async (req,res) => res.json(await prisma.shiftType.findMany({ where: { active: true }, orderBy: { name: 'asc' } }))));
-app.post('/api/shift-types', asyncRoute(async (req,res) => {
-  const name = String(req.body.name || '').trim(); if (!name) return res.status(400).json({ error: 'Укажите название типа смены' });
-  res.status(201).json(await prisma.shiftType.create({ data: { name } }));
+app.get('/api/tasks', asyncRoute(async (req, res) => {
+  const tasks = await prisma.task.findMany({ include: { employee: { include: { branch: true } } }, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
+  res.json(tasks);
 }));
-app.put('/api/employees/:id/rates', asyncRoute(async (req,res) => {
-  const { shiftTypeId, amount } = req.body;
-  const n = Number(amount); if (!shiftTypeId || !Number.isFinite(n) || n < 0) return res.status(400).json({ error: 'Проверьте тип смены и сумму' });
-  const rate = await prisma.employeeRate.upsert({ where: { employeeId_shiftTypeId: { employeeId: req.params.id, shiftTypeId } }, update: { amount: n }, create: { employeeId: req.params.id, shiftTypeId, amount: n } });
-  res.json(rate);
+app.post('/api/tasks', asyncRoute(async (req, res) => {
+  const employeeId = cleanText(req.body.employeeId);
+  const title = cleanText(req.body.title);
+  const description = cleanText(req.body.description);
+  if (!employeeId || title.length < 3) return res.status(400).json({ error: 'Выберите сотрудника и укажите название задания (не менее 3 символов)' });
+  const employee = await prisma.employee.findUnique({ where: { id: employeeId } });
+  if (!employee || employee.status !== 'Работает') return res.status(404).json({ error: 'Активный сотрудник не найден' });
+  const dueDate = req.body.dueDate ? new Date(req.body.dueDate) : null;
+  if (dueDate && Number.isNaN(dueDate.getTime())) return res.status(400).json({ error: 'Некорректный срок выполнения' });
+  const task = await prisma.task.create({ data: { employeeId, title, description: description || null, dueDate } , include: { employee: { include: { branch: true } } } });
+  res.status(201).json(task);
 }));
-app.get('/api/shifts', asyncRoute(async (req,res) => {
-  const where = {};
-  if (req.query.from || req.query.to) where.workDate = { ...(req.query.from ? { gte: new Date(req.query.from) } : {}), ...(req.query.to ? { lte: new Date(req.query.to + 'T23:59:59.999Z') } : {}) };
-  if (req.query.branchId) where.employee = { branchId: req.query.branchId };
-  res.json(await prisma.shift.findMany({ where, include: { employee: { include: { branch: true } }, shiftType: true }, orderBy: { workDate: 'desc' } }));
+app.patch('/api/tasks/:id', asyncRoute(async (req, res) => {
+  const status = cleanText(req.body.status);
+  if (!['Новое', 'В работе', 'Выполнено'].includes(status)) return res.status(400).json({ error: 'Недопустимый статус задания' });
+  const task = await prisma.task.update({ where: { id: req.params.id }, data: { status, completedAt: status === 'Выполнено' ? new Date() : null }, include: { employee: { include: { branch: true } } } });
+  res.json(task);
 }));
-app.post('/api/shifts', asyncRoute(async (req,res) => {
-  const { employeeId, shiftTypeId, workDate, startedAt, endedAt, comment } = req.body;
-  if (!employeeId || !shiftTypeId || !workDate) return res.status(400).json({ error: 'Сотрудник, тип смены и дата обязательны' });
-  const rate = await prisma.employeeRate.findUnique({ where: { employeeId_shiftTypeId: { employeeId, shiftTypeId } } });
-  if (!rate) return res.status(400).json({ error: 'Для сотрудника не задана стоимость этого типа смены' });
-  const shift = await prisma.shift.create({ data: { employeeId, shiftTypeId, workDate: new Date(workDate), startedAt: startedAt || null, endedAt: endedAt || null, amount: rate.amount, comment: comment || null }, include: { employee: true, shiftType: true } });
-  res.status(201).json(shift);
-}));
+
 app.get('/api/summary', asyncRoute(async (req,res) => {
-  const now = new Date(); const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)); const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth()+1, 1));
-  const [employees, branches, shifts] = await Promise.all([
-    prisma.employee.count({ where: { status: 'Работает' } }), prisma.branch.count({ where: { active: true } }),
-    prisma.shift.findMany({ where: { workDate: { gte: from, lt: to } }, select: { amount: true } })
+  const [employees, branches, tasks, completedTasks] = await Promise.all([
+    prisma.employee.count({ where: { status: 'Работает' } }),
+    prisma.branch.count({ where: { active: true } }),
+    prisma.task.count(),
+    prisma.task.count({ where: { status: 'Выполнено' } })
   ]);
-  res.json({ employees, branches, shifts: shifts.length, payroll: shifts.reduce((sum,s) => sum + Number(s.amount), 0) });
+  res.json({ employees, branches, tasks, completedTasks });
 }));
 
 app.use('/api', (err, req, res, next) => { console.error(err); res.status(400).json({ error: err.message || 'Ошибка сервера' }); });

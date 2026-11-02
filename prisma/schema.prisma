@@ -34,6 +34,7 @@ model Employee {
   rates       EmployeeRate[]
   shifts      Shift[]
   activation  EmployeeActivation?
+  tasks       Task[]
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 }
@@ -109,4 +110,19 @@ model EmployeeActivation {
   tokenHash String   @unique
   expiresAt DateTime
   createdAt DateTime @default(now())
+}
+
+
+model Task {
+  id          String   @id @default(cuid())
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  dueDate     DateTime?
+  status      String   @default("Новое")
+  employeeComment String?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
