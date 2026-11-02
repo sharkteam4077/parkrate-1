@@ -156,7 +156,7 @@ app.use('/api', (req, res, next) => {
 app.get('/api/employee/me', asyncRoute(async (req, res) => {
   const employee = await prisma.employee.findUnique({ where: { id: req.employeeId }, include: { branch: true } });
   if (!employee || employee.status !== 'Работает' || !employee.login || !employee.passwordHash) return res.status(403).json({ error: 'Доступ к кабинету приостановлен' });
-  res.json({ id: employee.id, fullName: employee.fullName, phone: employee.phone, position: employee.position, status: employee.status, hireDate: employee.hireDate, branch: employee.branch?.name, login: employee.login });
+  res.json({ id: employee.id, fullName: employee.fullName, phone: employee.phone, position: employee.position, status: employee.status, hireDate: employee.hireDate, branch: employee.branch?.name, branchCity: employee.branch?.city || employee.branch?.name, login: employee.login });
 }));
 app.get('/api/employee/tasks', asyncRoute(async (req, res) => {
   const activeEmployee = await prisma.employee.findUnique({ where: { id: req.employeeId }, select: { status: true, login: true, passwordHash: true } });
@@ -266,8 +266,14 @@ app.patch('/api/invites/:id', asyncRoute(async (req, res) => {
 
 app.get('/api/branches', asyncRoute(async (req,res) => res.json(await prisma.branch.findMany({ orderBy: { name: 'asc' } }))));
 app.post('/api/branches', asyncRoute(async (req,res) => {
-  const name = String(req.body.name || '').trim(); if (!name) return res.status(400).json({ error: 'Укажите название филиала' });
-  res.status(201).json(await prisma.branch.create({ data: { name, address: req.body.address || null } }));
+  const name = String(req.body.name || '').trim(); const city = String(req.body.city || '').trim(); if (!name) return res.status(400).json({ error: 'Укажите название филиала' });
+  if (!city) return res.status(400).json({ error: 'Укажите город филиала' });
+  res.status(201).json(await prisma.branch.create({ data: { name, city, address: req.body.address || null } }));
+}));
+app.patch('/api/branches/:id', asyncRoute(async (req,res) => {
+  const city = String(req.body.city || '').trim();
+  if (!city) return res.status(400).json({ error: 'Укажите город филиала' });
+  res.json(await prisma.branch.update({ where: { id: req.params.id }, data: { city } }));
 }));
 app.get('/api/employees', asyncRoute(async (req,res) => { const rows = await prisma.employee.findMany({ include: { branch: true }, orderBy: { fullName: 'asc' } }); res.json(rows.map(({ passwordHash, ...employee }) => employee)); }));
 app.post('/api/employees', asyncRoute(async (req,res) => {

@@ -29,3 +29,9 @@
 .location-notice{display:grid;gap:5px;padding:13px 15px;border-radius:9px;margin:9px 0;background:#242b3a;border:1px solid #3a4355;font-size:11px}
 .location-notice span{color:#dce2ed}.location-notice small{color:#9ba7bb}.location-notice.pending{border-color:#74633b;background:#302b20}.location-notice.approved{border-color:#315f4c;background:#1e332d}.location-notice.rejected{border-color:#69404a;background:#35252b}
 @media(max-width:650px){.employee-location-map{height:390px}.selected-location{align-items:stretch;flex-direction:column}.selected-location .primary-btn{width:100%}}
+/* Branch city configuration */
+.branch-card{flex-wrap:wrap;align-items:flex-start}
+.branch-card label{display:flex;flex:1 1 100%;flex-direction:column;gap:6px;color:#9aa5b8;font-size:9px}
+.branch-card input{width:100%;height:34px;background:#111722;border:1px solid #343e50;border-radius:7px;color:#e4e8f0;padding:0 9px;outline:none;font-size:10px}
+.branch-card input:focus{border-color:#8171ec}
+.branch-card .small-btn{align-self:flex-start}

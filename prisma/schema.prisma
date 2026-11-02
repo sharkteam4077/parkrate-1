@@ -11,6 +11,7 @@ model Branch {
   id        String     @id @default(cuid())
   name      String
   address   String?
+  city      String?
   active    Boolean    @default(true)
   employees Employee[]
   invites   EmployeeInvite[]
