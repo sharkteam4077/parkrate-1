@@ -36,7 +36,8 @@ try {
   `);
 
   await prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(731904221)`;
+    // Select an integer from the set-returning FROM call; Prisma cannot deserialize PostgreSQL's void return type.
+    await tx.$queryRaw`SELECT 1::int AS locked FROM pg_advisory_xact_lock(731904221)`;
     const rows = await tx.$queryRaw`SELECT id FROM hr_manager_meta.bootstrap WHERE id = 1`;
     const firstInstall = rows.length === 0;
 
