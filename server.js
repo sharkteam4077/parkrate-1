@@ -1,6 +1,6 @@
 import express from 'express';
 import path from 'node:path';
-import { createHash, randomBytes, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, createHmac, timingSafeEqual, scryptSync } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 
@@ -27,17 +27,21 @@ if (!ADMIN_USERNAME || !ADMIN_PASSWORD || SESSION_SECRET.length < 32) {
 }
 const loginAttempts = new Map();
 const sign = value => createHmac('sha256', SESSION_SECRET).update(value).digest('base64url');
-const makeSession = () => {
-  const payload = Buffer.from(JSON.stringify({ sub: ADMIN_USERNAME, exp: Math.floor(Date.now()/1000) + SESSION_TTL_SECONDS, nonce: randomBytes(12).toString('hex') })).toString('base64url');
+const makeSession = (role, sub) => {
+  const payload = Buffer.from(JSON.stringify({ role, sub, exp: Math.floor(Date.now()/1000) + SESSION_TTL_SECONDS, nonce: randomBytes(12).toString('hex') })).toString('base64url');
   return `${payload}.${sign(payload)}`;
 };
-const validSession = token => {
-  if (!token || typeof token !== 'string') return false;
-  const parts = token.split('.'); if (parts.length !== 2) return false;
+const readSession = token => {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.'); if (parts.length !== 2) return null;
   const expected = Buffer.from(sign(parts[0])); const supplied = Buffer.from(parts[1]);
-  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return false;
-  try { const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString()); return payload.sub === ADMIN_USERNAME && payload.exp > Math.floor(Date.now()/1000); } catch { return false; }
+  if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return null;
+  try { const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString()); return payload.exp > Math.floor(Date.now()/1000) ? payload : null; } catch { return null; }
 };
+const validSession = (token, role, sub) => { const payload = readSession(token); return Boolean(payload && payload.role === role && (sub === undefined || payload.sub === sub)); };
+const hashPassword = password => { const salt = randomBytes(16).toString('hex'); return `scrypt$${salt}$${scryptSync(password, salt, 64).toString('hex')}`; };
+const verifyPassword = (password, stored) => { try { const [kind, salt, hash] = String(stored || '').split('$'); if (kind !== 'scrypt' || !salt || !hash) return false; const expected = Buffer.from(hash, 'hex'); const actual = scryptSync(password, salt, 64); return expected.length === actual.length && timingSafeEqual(expected, actual); } catch { return false; } };
+const EMPLOYEE_COOKIE = 'hr_employee_session';
 const getCookie = (req, name) => (req.headers.cookie || '').split(';').map(x => x.trim()).find(x => x.startsWith(`${name}=`))?.slice(name.length + 1);
 const sameOrigin = (req, res, next) => {
   const origin = req.get('origin');
@@ -63,24 +67,73 @@ app.post('/api/auth/login', sameOrigin, (req, res) => {
     return res.status(401).json({ error: 'Неверный логин или пароль' });
   }
   loginAttempts.delete(ip);
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${makeSession()}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL_SECONDS}${req.secure || process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${makeSession('admin', ADMIN_USERNAME)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL_SECONDS}${req.secure || process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
   res.json({ ok: true, username: ADMIN_USERNAME });
 });
 app.get('/api/auth/me', (req, res) => {
-  if (!validSession(getCookie(req, SESSION_COOKIE))) return res.status(401).json({ authenticated: false });
+  if (!validSession(getCookie(req, SESSION_COOKIE), 'admin', ADMIN_USERNAME)) return res.status(401).json({ authenticated: false });
   res.json({ authenticated: true, username: ADMIN_USERNAME });
 });
 app.post('/api/auth/logout', sameOrigin, (req, res) => {
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${req.secure || process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
   res.json({ ok: true });
 });
-// Всё административное API закрыто. Публичными остаются только анкеты по приглашению.
+// Авторизация сотрудника: отдельная сессия и отдельный набор API.
+const employeeLoginAttempts = new Map();
+app.post('/api/employee-auth/login', sameOrigin, asyncRoute(async (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const attempt = employeeLoginAttempts.get(ip) || { count: 0, until: 0 };
+  if (attempt.until > Date.now()) return res.status(429).json({ error: 'Слишком много попыток. Подождите 15 минут.' });
+  const login = cleanText(req.body.login).toLowerCase();
+  const password = String(req.body.password || '');
+  const employee = await prisma.employee.findUnique({ where: { login } });
+  if (!employee || !employee.passwordHash || employee.status !== 'Работает' || !verifyPassword(password, employee.passwordHash)) {
+    attempt.count += 1; if (attempt.count >= 8) { attempt.count = 0; attempt.until = Date.now() + 15 * 60 * 1000; }
+    employeeLoginAttempts.set(ip, attempt);
+    return res.status(401).json({ error: 'Неверный логин или пароль, либо доступ не активирован' });
+  }
+  employeeLoginAttempts.delete(ip);
+  res.setHeader('Set-Cookie', `${EMPLOYEE_COOKIE}=${makeSession('employee', employee.id)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL_SECONDS}${req.secure || process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+  res.json({ ok: true });
+}));
+app.get('/api/employee-auth/me', asyncRoute(async (req, res) => {
+  const session = readSession(getCookie(req, EMPLOYEE_COOKIE));
+  if (!session || session.role !== 'employee') return res.status(401).json({ authenticated: false });
+  const employee = await prisma.employee.findUnique({ where: { id: session.sub }, select: { id: true, status: true, login: true, passwordHash: true } });
+  if (!employee || employee.status !== 'Работает' || !employee.login || !employee.passwordHash) return res.status(401).json({ authenticated: false });
+  res.json({ authenticated: true });
+}));
+app.post('/api/employee-auth/logout', sameOrigin, (req, res) => {
+  res.setHeader('Set-Cookie', `${EMPLOYEE_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${req.secure || process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+  res.json({ ok: true });
+});
+
+// Разделённая защита: сотрудник видит только собственные данные, остальные API доступны руководителю.
 app.use('/api', (req, res, next) => {
-  if (req.path === '/health' || req.path.startsWith('/auth/') || req.path.startsWith('/public/')) return next();
-  if (!validSession(getCookie(req, SESSION_COOKIE))) return res.status(401).json({ error: 'Требуется авторизация' });
+  if (req.path === '/health' || req.path.startsWith('/auth/') || req.path.startsWith('/employee-auth/') || req.path.startsWith('/public/')) return next();
+  if (req.path.startsWith('/employee/')) {
+    const session = readSession(getCookie(req, EMPLOYEE_COOKIE));
+    if (!session || session.role !== 'employee') return res.status(401).json({ error: 'Требуется вход сотрудника' });
+    req.employeeId = session.sub;
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return sameOrigin(req, res, next);
+    return next();
+  }
+  if (!validSession(getCookie(req, SESSION_COOKIE), 'admin', ADMIN_USERNAME)) return res.status(401).json({ error: 'Требуется авторизация руководителя' });
   if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return sameOrigin(req, res, next);
   next();
 });
+
+app.get('/api/employee/me', asyncRoute(async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { id: req.employeeId }, include: { branch: true } });
+  if (!employee || employee.status !== 'Работает' || !employee.login || !employee.passwordHash) return res.status(403).json({ error: 'Доступ к кабинету приостановлен' });
+  res.json({ id: employee.id, fullName: employee.fullName, phone: employee.phone, position: employee.position, status: employee.status, hireDate: employee.hireDate, branch: employee.branch?.name, login: employee.login });
+}));
+app.get('/api/employee/shifts', asyncRoute(async (req, res) => {
+  const activeEmployee = await prisma.employee.findUnique({ where: { id: req.employeeId }, select: { status: true, login: true, passwordHash: true } });
+  if (!activeEmployee || activeEmployee.status !== 'Работает' || !activeEmployee.login || !activeEmployee.passwordHash) return res.status(403).json({ error: 'Доступ к кабинету приостановлен' });
+  const shifts = await prisma.shift.findMany({ where: { employeeId: req.employeeId }, include: { shiftType: true }, orderBy: { workDate: 'desc' }, take: 250 });
+  res.json(shifts.map(s => ({ id: s.id, workDate: s.workDate, startedAt: s.startedAt, endedAt: s.endedAt, amount: s.amount, comment: s.comment, status: s.status, shiftType: s.shiftType?.name })));
+}));
 const hashToken = token => createHash('sha256').update(token).digest('hex');
 const cleanText = value => String(value || '').trim();
 
@@ -150,7 +203,7 @@ app.post('/api/branches', asyncRoute(async (req,res) => {
   const name = String(req.body.name || '').trim(); if (!name) return res.status(400).json({ error: 'Укажите название филиала' });
   res.status(201).json(await prisma.branch.create({ data: { name, address: req.body.address || null } }));
 }));
-app.get('/api/employees', asyncRoute(async (req,res) => res.json(await prisma.employee.findMany({ include: { branch: true, rates: { include: { shiftType: true } } }, orderBy: { fullName: 'asc' } }))));
+app.get('/api/employees', asyncRoute(async (req,res) => { const rows = await prisma.employee.findMany({ include: { branch: true, rates: { include: { shiftType: true } } }, orderBy: { fullName: 'asc' } }); res.json(rows.map(({ passwordHash, ...employee }) => employee)); }));
 app.post('/api/employees', asyncRoute(async (req,res) => {
   const { fullName, branchId } = req.body;
   if (!String(fullName || '').trim() || !branchId) return res.status(400).json({ error: 'ФИО и филиал обязательны' });
@@ -165,8 +218,25 @@ app.patch('/api/employees/:id', asyncRoute(async (req,res) => {
   const allowed = ['fullName','phone','position','status','notes','branchId'];
   const data = Object.fromEntries(allowed.filter(k => req.body[k] !== undefined).map(k => [k, req.body[k]]));
   if (req.body.hireDate !== undefined) data.hireDate = req.body.hireDate ? new Date(req.body.hireDate) : null;
-  res.json(await prisma.employee.update({ where: { id: req.params.id }, data, include: { branch: true, rates: { include: { shiftType: true } } } }));
+  const updated = await prisma.employee.update({ where: { id: req.params.id }, data, include: { branch: true, rates: { include: { shiftType: true } } } }); const { passwordHash, ...safeEmployee } = updated; res.json(safeEmployee);
 }));
+app.post('/api/employees/:id/access', asyncRoute(async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id } });
+  if (!employee) return res.status(404).json({ error: 'Сотрудник не найден' });
+  const login = cleanText(req.body.login).toLowerCase();
+  const password = String(req.body.password || '');
+  if (!/^[a-z0-9._-]{3,40}$/.test(login)) return res.status(400).json({ error: 'Логин: 3–40 символов, латинские буквы, цифры, точка, дефис или подчёркивание' });
+  if (password.length < 8 || password.length > 128) return res.status(400).json({ error: 'Пароль должен содержать от 8 до 128 символов' });
+  const existing = await prisma.employee.findUnique({ where: { login } });
+  if (existing && existing.id !== employee.id) return res.status(409).json({ error: 'Этот логин уже занят' });
+  await prisma.employee.update({ where: { id: employee.id }, data: { login, passwordHash: hashPassword(password) } });
+  res.json({ ok: true, login });
+}));
+app.delete('/api/employees/:id/access', asyncRoute(async (req, res) => {
+  await prisma.employee.update({ where: { id: req.params.id }, data: { login: null, passwordHash: null } });
+  res.json({ ok: true });
+}));
+
 app.get('/api/shift-types', asyncRoute(async (req,res) => res.json(await prisma.shiftType.findMany({ where: { active: true }, orderBy: { name: 'asc' } }))));
 app.post('/api/shift-types', asyncRoute(async (req,res) => {
   const name = String(req.body.name || '').trim(); if (!name) return res.status(400).json({ error: 'Укажите название типа смены' });

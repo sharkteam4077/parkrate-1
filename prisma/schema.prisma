@@ -22,6 +22,8 @@ model Employee {
   id          String         @id @default(cuid())
   fullName    String
   phone       String?
+  login       String?        @unique
+  passwordHash String?
   birthDate   DateTime?
   position    String?
   hireDate    DateTime?
