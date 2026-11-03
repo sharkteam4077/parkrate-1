@@ -72,3 +72,9 @@
 .location-row-actions{display:flex;align-items:center;gap:7px;flex-wrap:nowrap;white-space:nowrap;min-width:max-content}.location-row-actions .small-btn{white-space:nowrap;min-width:0;padding-left:10px;padding-right:10px}.location-row-actions .delete-icon{flex:0 0 auto;margin:0}.location-created-at{display:inline-block;white-space:nowrap;font-variant-numeric:tabular-nums;color:#d7deeb;font-size:11px}.location-requests-table td{vertical-align:middle}
 
 .location-requests-table{min-width:790px}.location-requests-table td:last-child{min-width:205px}.location-requests-table td:nth-last-child(2){min-width:155px}
+
+/* Keep row-level actions aligned horizontally, including approve/reject/delete controls. */
+.inline-actions{display:flex;align-items:center;gap:7px;flex-wrap:nowrap;white-space:nowrap}
+.action-cell-controls{min-width:max-content}
+.action-cell-controls .delete-icon{flex:0 0 auto;margin:0}
+@media(max-width:650px){.action-cell-controls{gap:5px}.action-cell-controls .small-btn{padding:6px 8px;font-size:10px}.employee-task .inline-actions{justify-content:flex-end;flex-wrap:nowrap}}

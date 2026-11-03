@@ -11,7 +11,8 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-app.use(express.json({ limit: '25mb' }));
+// Large media payloads are accepted; practical limits are imposed by Railway/browser resources.
+app.use(express.json({ limit: '2gb' }));
 const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, service: 'ПаркРайт' }));
@@ -172,13 +173,9 @@ app.post('/api/employee/tasks/:id/reports', asyncRoute(async (req, res) => {
   if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) return res.status(400).json({ error: 'Сначала определите местоположение на объекте' });
   const media = Array.isArray(req.body.media) ? req.body.media : [];
   if (!media.length) return res.status(400).json({ error: 'Добавьте хотя бы одну фотографию или видеозапись' });
-  if (media.length > 8) return res.status(400).json({ error: 'Можно прикрепить не более 8 файлов' });
-  let totalBytes = 0;
   for (const item of media) {
-    if (!item || !['image/jpeg','image/png','image/webp','image/heic','video/mp4','video/webm','video/quicktime'].includes(item.type) || typeof item.data !== 'string' || !item.data.startsWith(`data:${item.type};base64,`)) return res.status(400).json({ error: 'Поддерживаются фото JPG, PNG, WEBP, HEIC и видео MP4, WEBM, MOV' });
-    totalBytes += Buffer.from(item.data.split(',')[1], 'base64').length;
+    if (!item || typeof item.type !== 'string' || !/^(image|video)\//i.test(item.type) || typeof item.data !== 'string' || !item.data.startsWith(`data:${item.type};base64,`)) return res.status(400).json({ error: 'Можно прикреплять изображения и видео в поддерживаемых браузером форматах' });
   }
-  if (totalBytes > 18 * 1024 * 1024) return res.status(413).json({ error: 'Общий размер файлов не должен превышать 18 МБ' });
   const result = 'Фото- и видеоподтверждение выполнения на локации';
   const comment = null;
   const hoursSpent = null;
@@ -435,7 +432,7 @@ app.patch('/api/location-selections/:id', asyncRoute(async (req,res) => {
         locationId: current.locationId,
         adminUsername: ADMIN_USERNAME,
         locationSelectionId: current.id,
-        status: 'Новое'
+        status: 'В работе'
       }, include:{employee:{include:{branch:true}},location:true}});
     }
     const updated = await tx.locationSelection.findUnique({where:{id:current.id}});
