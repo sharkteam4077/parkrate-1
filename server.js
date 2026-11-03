@@ -219,8 +219,11 @@ app.post('/api/employee/tasks/:id/reports', asyncRoute(async (req, res) => {
   const task = await prisma.task.findFirst({ where: { id: req.params.id, employeeId: req.employeeId } });
   if (!task) return res.status(404).json({ error: 'Задание не найдено' });
   if (task.status === 'Выполнено') return res.status(409).json({ error: 'Задание уже принято и закрыто' });
-  const latitude = Number(req.body.latitude), longitude = Number(req.body.longitude);
-  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) return res.status(400).json({ error: 'Сначала определите местоположение на объекте' });
+  const latitude = req.body.latitude == null || req.body.latitude === '' ? null : Number(req.body.latitude);
+  const longitude = req.body.longitude == null || req.body.longitude === '' ? null : Number(req.body.longitude);
+  const hasLatitude = Number.isFinite(latitude) && latitude >= -90 && latitude <= 90;
+  const hasLongitude = Number.isFinite(longitude) && longitude >= -180 && longitude <= 180;
+  if ((latitude !== null || longitude !== null) && !(hasLatitude && hasLongitude)) return res.status(400).json({ error: 'Координаты указаны некорректно. Удалите геопозицию или определите её повторно.' });
   const media = Array.isArray(req.body.media) ? req.body.media : [];
   if (!media.length) return res.status(400).json({ error: 'Добавьте хотя бы одну фотографию или видеозапись' });
   const s3 = getB2Client();
@@ -232,7 +235,7 @@ app.post('/api/employee/tasks/:id/reports', asyncRoute(async (req, res) => {
   }));
   const latest = await prisma.taskReport.findFirst({ where: { taskId: task.id, employeeId: req.employeeId }, orderBy: { createdAt: 'desc' } });
   if (latest?.status === 'На проверке' || latest?.status === 'Принят') return res.status(409).json({ error: 'Отчёт уже находится на проверке или принят' });
-  const report = await prisma.taskReport.create({ data: { taskId: task.id, employeeId: req.employeeId, result: 'Фото- и видеоподтверждение выполнения на локации', comment: null, hoursSpent: null, latitude, longitude, mediaJson: JSON.stringify(verifiedMedia), status: 'На проверке' } });
+  const report = await prisma.taskReport.create({ data: { taskId: task.id, employeeId: req.employeeId, result: 'Фото- и видеоподтверждение выполнения задания', comment: null, hoursSpent: null, latitude: hasLatitude && hasLongitude ? latitude : null, longitude: hasLatitude && hasLongitude ? longitude : null, mediaJson: JSON.stringify(verifiedMedia), status: 'На проверке' } });
   await prisma.task.update({ where: { id: task.id }, data: { status: 'На проверке', completedAt: null } });
   res.status(201).json(report);
 }));
