@@ -236,3 +236,43 @@
   .task-chat-messages, .task-chat-compact .task-chat-messages { height: 250px; }
   .chat-message { max-width: 94%; }
 }
+
+
+/* Chat is rendered OUTSIDE the horizontally scrollable task table. */
+.task-table-section, .task-chat-standalone { width:100%; min-width:0; max-width:100%; }
+.task-table-section { display:flex; flex-direction:column; gap:16px; }
+.task-table-section .table-wrap { width:100%; max-width:100%; min-width:0; overflow-x:auto; overscroll-behavior-x:contain; }
+.task-table-section .table-wrap table { min-width:790px; }
+.task-chat-standalone {
+  overflow:hidden;
+  border:1px solid #30415d;
+  border-radius:18px;
+  background:#111a29;
+  box-shadow:0 16px 40px rgba(0,0,0,.18);
+}
+.task-chat-context {
+  display:flex; align-items:center; justify-content:space-between; gap:16px;
+  padding:15px 20px;
+  border-bottom:1px solid #2a3a54;
+  background:linear-gradient(110deg,#1b2940,#172235);
+}
+.task-chat-context div { display:flex; flex-direction:column; gap:4px; min-width:0; }
+.task-chat-context span { color:#7f9ac2; font-size:9px; font-weight:800; letter-spacing:1.1px; }
+.task-chat-context b { color:#eef4ff; font-size:13px; overflow-wrap:anywhere; }
+.task-chat-context small { color:#8fa2bf; font-size:10px; }
+.task-chat-context button {
+  flex:0 0 32px; width:32px; height:32px; border:1px solid #3a4c68;
+  border-radius:10px; background:#202e43; color:#b9c9e2; font-size:22px;
+  line-height:1; cursor:pointer;
+}
+.task-chat-standalone .task-chat { margin:0; border:0; border-radius:0; box-shadow:none; }
+.task-chat-standalone .task-chat-head { min-height:58px; padding:11px 20px; }
+.task-chat-standalone .task-chat-messages,
+.task-chat-standalone .task-chat-compact .task-chat-messages { height:300px; }
+.task-chat-standalone .task-chat-compose { padding-left:18px; padding-right:18px; }
+.main-area, .content, .panel { min-width:0; }
+@media(max-width:760px) {
+  .task-chat-context { padding:12px 14px; }
+  .task-chat-standalone .task-chat-messages,
+  .task-chat-standalone .task-chat-compact .task-chat-messages { height:260px; }
+}
