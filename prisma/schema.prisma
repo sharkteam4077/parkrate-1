@@ -133,6 +133,11 @@ model Task {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   reports     TaskReport[]
+  locationId  String?
+  location    Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  adminUsername String?
+  locationSelectionId String? @unique
+  locationSelection LocationSelection? @relation(fields: [locationSelectionId], references: [id], onDelete: SetNull)
 }
 
 
@@ -145,6 +150,7 @@ model Location {
   district  String
   province  String
   selections LocationSelection[]
+  tasks      Task[]
   createdAt DateTime @default(now())
   @@index([city])
   @@index([region])
@@ -161,6 +167,7 @@ model LocationSelection {
   reviewedAt  DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  task        Task?
   @@index([status, createdAt])
   @@index([employeeId, status])
   @@index([locationId, status])

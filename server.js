@@ -161,7 +161,7 @@ app.get('/api/employee/me', asyncRoute(async (req, res) => {
 app.get('/api/employee/tasks', asyncRoute(async (req, res) => {
   const activeEmployee = await prisma.employee.findUnique({ where: { id: req.employeeId }, select: { status: true, login: true, passwordHash: true } });
   if (!activeEmployee || activeEmployee.status !== 'Работает' || !activeEmployee.login || !activeEmployee.passwordHash) return res.status(403).json({ error: 'Доступ к кабинету приостановлен' });
-  const tasks = await prisma.task.findMany({ where: { employeeId: req.employeeId }, include: { reports: { where: { employeeId: req.employeeId }, orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
+  const tasks = await prisma.task.findMany({ where: { employeeId: req.employeeId }, include: { location: true, reports: { where: { employeeId: req.employeeId }, orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
   res.json(tasks);
 }));
 app.post('/api/employee/tasks/:id/reports', asyncRoute(async (req, res) => {
@@ -347,7 +347,7 @@ app.patch('/api/employees/:id', asyncRoute(async (req,res) => {
   const updated = await prisma.employee.update({ where: { id: req.params.id }, data, include: { branch: true } }); const { passwordHash, ...safeEmployee } = updated; res.json(safeEmployee);
 }));
 app.get('/api/tasks', asyncRoute(async (req, res) => {
-  const tasks = await prisma.task.findMany({ include: { employee: { include: { branch: true } } }, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
+  const tasks = await prisma.task.findMany({ include: { employee: { include: { branch: true } }, location: true, locationSelection: true }, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
   res.json(tasks);
 }));
 app.post('/api/tasks', asyncRoute(async (req, res) => {
@@ -359,7 +359,7 @@ app.post('/api/tasks', asyncRoute(async (req, res) => {
   if (!employee || employee.status !== 'Работает') return res.status(404).json({ error: 'Активный сотрудник не найден' });
   const dueDate = req.body.dueDate ? new Date(req.body.dueDate) : null;
   if (dueDate && Number.isNaN(dueDate.getTime())) return res.status(400).json({ error: 'Некорректный срок выполнения' });
-  const task = await prisma.task.create({ data: { employeeId, title, description: description || null, dueDate } , include: { employee: { include: { branch: true } } } });
+  const task = await prisma.task.create({ data: { employeeId, title, description: description || null, dueDate } , include: { employee: { include: { branch: true } }, location: true } });
   res.status(201).json(task);
 }));
 app.delete('/api/tasks/:id', asyncRoute(async (req, res) => {
@@ -397,7 +397,7 @@ app.patch('/api/reports/:id', asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/location-selections', asyncRoute(async (req,res) => res.json(await prisma.locationSelection.findMany({
-  include:{employee:{include:{branch:true}},location:true},orderBy:[{status:'asc'},{createdAt:'desc'}]
+  include:{employee:{include:{branch:true}},location:true,task:true},orderBy:[{status:'asc'},{createdAt:'desc'}]
 }))));
 app.delete('/api/location-selections/:id', asyncRoute(async (req,res) => {
   const row = await prisma.locationSelection.findUnique({ where: { id: req.params.id } });
@@ -408,14 +408,34 @@ app.delete('/api/location-selections/:id', asyncRoute(async (req,res) => {
 app.patch('/api/location-selections/:id', asyncRoute(async (req,res) => {
   const status=cleanText(req.body.status);
   if(!['Одобрена','Отклонена'].includes(status)) return res.status(400).json({error:'Недопустимое решение'});
-  const current=await prisma.locationSelection.findUnique({where:{id:req.params.id}});
+  const current=await prisma.locationSelection.findUnique({where:{id:req.params.id},include:{employee:true,location:true,task:true}});
   if(!current) return res.status(404).json({error:'Запрос не найден'});
   if(current.status!=='На проверке') return res.status(409).json({error:'Запрос уже рассмотрен'});
   if(status==='Одобрена'){
     const conflict=await prisma.locationSelection.findFirst({where:{locationId:current.locationId,status:'Одобрена',id:{not:current.id}}});
     if(conflict) return res.status(409).json({error:'Объект уже одобрен другому сотруднику'});
   }
-  res.json(await prisma.locationSelection.update({where:{id:current.id},data:{status,adminComment:cleanText(req.body.adminComment).slice(0,1000)||null,reviewedAt:new Date()},include:{employee:{include:{branch:true}},location:true}}));
+  const result = await prisma.$transaction(async tx => {
+    const updated = await tx.locationSelection.update({where:{id:current.id},data:{status,adminComment:cleanText(req.body.adminComment).slice(0,1000)||null,reviewedAt:new Date()}});
+    let task = null;
+    if (status === 'Одобрена') {
+      task = await tx.task.create({data:{
+        employeeId: current.employeeId,
+        title: `Работа на объекте: ${current.location.district || current.location.city || 'Выбранная локация'}`,
+        description: `Выполнить работу на выбранном объекте.
+Объект: ${current.location.district || '—'}
+Город: ${current.location.city || '—'}
+Регион: ${current.location.region || '—'}
+Координаты: ${current.location.latitude}, ${current.location.longitude}`,
+        locationId: current.locationId,
+        adminUsername: ADMIN_USERNAME,
+        locationSelectionId: current.id,
+        status: 'Новое'
+      }, include:{employee:{include:{branch:true}},location:true}});
+    }
+    return { ...updated, task };
+  });
+  res.json({...result, employee:current.employee, location:current.location});
 }));
 
 app.get('/api/summary', asyncRoute(async (req,res) => {
