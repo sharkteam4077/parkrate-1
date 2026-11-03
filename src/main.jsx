@@ -4,9 +4,14 @@ import { Activity, Building2, CalendarDays, Flag, ChevronDown, CircleDollarSign,
 import './style.css';
 
 const api = async (url, options={}) => {
-  const res = await fetch('/api'+url, { credentials: 'same-origin', headers: { 'Content-Type':'application/json' }, ...options });
+  let res;
+  try {
+    res = await fetch('/api'+url, { credentials: 'same-origin', headers: { 'Content-Type':'application/json' }, ...options });
+  } catch (error) {
+    throw new Error(`Нет соединения с сервером ПаркРайт при запросе ${url}. Проверьте доступность /api/health и статус сервиса на хостинге.`);
+  }
   const data = await res.json().catch(()=>({}));
-  if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
+  if (!res.ok) throw new Error(data.error || `Ошибка запроса (${res.status})`);
   return data;
 };
 const money = n => new Intl.NumberFormat('ru-RU',{style:'currency',currency:'RUB',maximumFractionDigits:0}).format(Number(n||0));
@@ -138,9 +143,10 @@ function EmployeeCabinet({onLogout}) {
  const [profile,setProfile]=useState(null),[tasks,setTasks]=useState([]),[error,setError]=useState(''),[comments,setComments]=useState({}),[reportForms,setReportForms]=useState({}),[busyId,setBusyId]=useState('');
  const [locations,setLocations]=useState([]),[selections,setSelections]=useState([]),[selected,setSelected]=useState(null);
  const [workerPosition,setWorkerPosition]=useState(null),[geoStatus,setGeoStatus]=useState(''),[refreshing,setRefreshing]=useState(false),[section,setSection]=useState('home');
- const load=async()=>{try{const [p,t,l,s]=await Promise.all([api('/employee/me'),api('/employee/tasks'),api('/employee/locations'),api('/employee/location-selections')]);setProfile(p);setTasks(t);setLocations(l);setSelections(s);return true;}catch(e){setError(e.message);return false;}};
- const refreshData=async()=>{setRefreshing(true);setError('');try{await load();}finally{setRefreshing(false);}};
+ const load=async()=>{try{const [p,t,s]=await Promise.all([api('/employee/me'),api('/employee/tasks'),api('/employee/location-selections')]);setProfile(p);setTasks(t);setSelections(s);return true;}catch(e){setError(e.message);return false;}};
+ const refreshData=async()=>{setRefreshing(true);setError('');try{await load();if(section==='new'){const rows=await api('/employee/locations');setLocations(rows);}}catch(e){setError(e.message);}finally{setRefreshing(false);}};
  useEffect(()=>{load();const timer=setInterval(load,300000);return()=>clearInterval(timer);},[]);
+ useEffect(()=>{if(section!=='new')return;let active=true;api('/employee/locations').then(rows=>{if(active)setLocations(rows);}).catch(e=>{if(active)setError(`Не удалось загрузить объекты карты: ${e.message}`);});return()=>{active=false;};},[section]);
  const locateWorker=()=>{if(!navigator.geolocation){setGeoStatus('Браузер не поддерживает определение местоположения.');return;}setGeoStatus('Определяем местоположение…');navigator.geolocation.getCurrentPosition(pos=>{setWorkerPosition({latitude:pos.coords.latitude,longitude:pos.coords.longitude});setGeoStatus('Ваше местоположение определено. Ближайшие объекты показаны первыми.');},err=>{setGeoStatus(err.code===1?'Доступ к геолокации запрещён. Разрешите его в настройках браузера.':'Не удалось определить местоположение. Проверьте GPS и подключение.');},{enableHighAccuracy:true,timeout:15000,maximumAge:60000});};
  const distanceKm=(a,b)=>{const rad=x=>x*Math.PI/180;const dLat=rad(b.latitude-a.latitude),dLon=rad(b.longitude-a.longitude);const q=Math.sin(dLat/2)**2+Math.cos(rad(a.latitude))*Math.cos(rad(b.latitude))*Math.sin(dLon/2)**2;return 6371*2*Math.atan2(Math.sqrt(q),Math.sqrt(1-q));};
  const nearestLocations=workerPosition?[...locations].map(loc=>({...loc,distanceKm:distanceKm(workerPosition,loc)})).sort((a,b)=>a.distanceKm-b.distanceKm).slice(0,50):locations;
