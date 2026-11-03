@@ -1,0 +1,21 @@
+[
+  {
+    "corsRuleName": "parkwright-web-uploads",
+    "allowedOrigins": [
+      "https://parkrate-production.up.railway.app",
+      "https://parkrate-ru.company"
+    ],
+    "allowedOperations": [
+      "s3_put",
+      "s3_get",
+      "s3_head"
+    ],
+    "allowedHeaders": [
+      "*"
+    ],
+    "exposeHeaders": [
+      "ETag"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

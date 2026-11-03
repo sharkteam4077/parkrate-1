@@ -1,6 +1,8 @@
 import express from 'express';
 import path from 'node:path';
-import { createHash, randomBytes, createHmac, timingSafeEqual, scryptSync } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, createHmac, timingSafeEqual, scryptSync } from 'node:crypto';
+import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { PrismaClient } from '@prisma/client';
@@ -10,9 +12,22 @@ const app = express();
 // Railway terminates HTTPS at its proxy; trust forwarded headers so invite links use https.
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
+const b2Configured = Boolean(process.env.B2_KEY_ID && process.env.B2_APPLICATION_KEY && process.env.B2_BUCKET_NAME && process.env.B2_ENDPOINT && process.env.B2_REGION);
+let b2Client;
+function getB2Client() {
+  if (!b2Configured) throw new Error('Backblaze B2 не настроен. Проверьте переменные B2_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET_NAME, B2_ENDPOINT и B2_REGION в Railway.');
+  if (!b2Client) b2Client = new S3Client({
+    region: process.env.B2_REGION,
+    endpoint: process.env.B2_ENDPOINT.startsWith('http') ? process.env.B2_ENDPOINT : `https://${process.env.B2_ENDPOINT}`,
+    forcePathStyle: true,
+    credentials: { accessKeyId: process.env.B2_KEY_ID, secretAccessKey: process.env.B2_APPLICATION_KEY }
+  });
+  return b2Client;
+}
+const b2Bucket = () => process.env.B2_BUCKET_NAME;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Large media payloads are accepted; practical limits are imposed by Railway/browser resources.
-app.use(express.json({ limit: '2gb' }));
+app.use(express.json({ limit: '2mb' }));
 const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, service: 'ПаркРайт' }));
@@ -165,6 +180,25 @@ app.get('/api/employee/tasks', asyncRoute(async (req, res) => {
   const tasks = await prisma.task.findMany({ where: { employeeId: req.employeeId }, include: { location: true, reports: { where: { employeeId: req.employeeId }, orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
   res.json(tasks);
 }));
+app.post('/api/employee/tasks/:id/reports/upload-urls', asyncRoute(async (req, res) => {
+  const task = await prisma.task.findFirst({ where: { id: req.params.id, employeeId: req.employeeId } });
+  if (!task) return res.status(404).json({ error: 'Задание не найдено' });
+  if (task.status === 'Выполнено') return res.status(409).json({ error: 'Задание уже принято и закрыто' });
+  const files = Array.isArray(req.body.files) ? req.body.files : [];
+  if (!files.length) return res.status(400).json({ error: 'Выберите фотографии или видео' });
+  const s3 = getB2Client();
+  const uploads = await Promise.all(files.map(async file => {
+    const type = String(file?.type || '').toLowerCase();
+    if (!/^(image|video)\//.test(type)) throw new Error('Разрешены только фотографии и видео');
+    const name = String(file?.name || 'file').slice(0, 240);
+    const key = `reports/${req.employeeId}/${task.id}/${randomUUID()}`;
+    const command = new PutObjectCommand({ Bucket: b2Bucket(), Key: key, ContentType: type });
+    const url = await getSignedUrl(s3, command, { expiresIn: 900 });
+    return { key, url, headers: { 'Content-Type': type }, type, name, size: Number(file?.size) || 0 };
+  }));
+  res.json({ uploads });
+}));
+
 app.post('/api/employee/tasks/:id/reports', asyncRoute(async (req, res) => {
   const task = await prisma.task.findFirst({ where: { id: req.params.id, employeeId: req.employeeId } });
   if (!task) return res.status(404).json({ error: 'Задание не найдено' });
@@ -173,15 +207,16 @@ app.post('/api/employee/tasks/:id/reports', asyncRoute(async (req, res) => {
   if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) return res.status(400).json({ error: 'Сначала определите местоположение на объекте' });
   const media = Array.isArray(req.body.media) ? req.body.media : [];
   if (!media.length) return res.status(400).json({ error: 'Добавьте хотя бы одну фотографию или видеозапись' });
-  for (const item of media) {
-    if (!item || typeof item.type !== 'string' || !/^(image|video)\//i.test(item.type) || typeof item.data !== 'string' || !item.data.startsWith(`data:${item.type};base64,`)) return res.status(400).json({ error: 'Можно прикреплять изображения и видео в поддерживаемых браузером форматах' });
-  }
-  const result = 'Фото- и видеоподтверждение выполнения на локации';
-  const comment = null;
-  const hoursSpent = null;
+  const s3 = getB2Client();
+  const verifiedMedia = await Promise.all(media.map(async item => {
+    if (!item || typeof item.key !== 'string' || !item.key.startsWith(`reports/${req.employeeId}/${task.id}/`) || typeof item.type !== 'string' || !/^(image|video)\//i.test(item.type)) throw new Error('Некорректные данные вложения. Загрузите файлы повторно.');
+    const head = await s3.send(new HeadObjectCommand({ Bucket: b2Bucket(), Key: item.key }));
+    if (!head.ContentLength) throw new Error('Одно из вложений не найдено в хранилище. Повторите загрузку.');
+    return { key: item.key, type: item.type, name: String(item.name || 'file').slice(0, 240), size: head.ContentLength };
+  }));
   const latest = await prisma.taskReport.findFirst({ where: { taskId: task.id, employeeId: req.employeeId }, orderBy: { createdAt: 'desc' } });
   if (latest?.status === 'На проверке' || latest?.status === 'Принят') return res.status(409).json({ error: 'Отчёт уже находится на проверке или принят' });
-  const report = await prisma.taskReport.create({ data: { taskId: task.id, employeeId: req.employeeId, result, comment, hoursSpent, latitude, longitude, mediaJson: JSON.stringify(media), status: 'На проверке' } });
+  const report = await prisma.taskReport.create({ data: { taskId: task.id, employeeId: req.employeeId, result: 'Фото- и видеоподтверждение выполнения на локации', comment: null, hoursSpent: null, latitude, longitude, mediaJson: JSON.stringify(verifiedMedia), status: 'На проверке' } });
   await prisma.task.update({ where: { id: task.id }, data: { status: 'На проверке', completedAt: null } });
   res.status(201).json(report);
 }));
@@ -375,7 +410,17 @@ app.patch('/api/tasks/:id', asyncRoute(async (req, res) => {
 
 app.get('/api/reports', asyncRoute(async (req, res) => {
   const reports = await prisma.taskReport.findMany({ include: { task: true, employee: { include: { branch: true } } }, orderBy: [{ status: 'asc' }, { createdAt: 'desc' }] });
-  res.json(reports.map(r => ({ ...r, media: (() => { try { return JSON.parse(r.mediaJson || '[]'); } catch { return []; } })() })));
+  const s3 = b2Configured ? getB2Client() : null;
+  const result = await Promise.all(reports.map(async r => {
+    let media = []; try { media = JSON.parse(r.mediaJson || '[]'); } catch {}
+    media = await Promise.all(media.map(async item => {
+      if (!item?.key || !s3) return item;
+      const data = await getSignedUrl(s3, new GetObjectCommand({ Bucket: b2Bucket(), Key: item.key }), { expiresIn: 3600 });
+      return { ...item, data };
+    }));
+    return { ...r, media };
+  }));
+  res.json(result);
 }));
 app.patch('/api/reports/:id', asyncRoute(async (req, res) => {
   const status = cleanText(req.body.status);
