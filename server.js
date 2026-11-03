@@ -11,10 +11,10 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '25mb' }));
 const asyncRoute = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-app.get('/api/health', (req, res) => res.json({ ok: true, service: 'HR Manager' }));
+app.get('/api/health', (req, res) => res.json({ ok: true, service: 'ПаркРайт' }));
 let locationsImport;
 async function ensureLocationsImported() {
   if (!locationsImport) locationsImport = (async () => {
@@ -161,15 +161,40 @@ app.get('/api/employee/me', asyncRoute(async (req, res) => {
 app.get('/api/employee/tasks', asyncRoute(async (req, res) => {
   const activeEmployee = await prisma.employee.findUnique({ where: { id: req.employeeId }, select: { status: true, login: true, passwordHash: true } });
   if (!activeEmployee || activeEmployee.status !== 'Работает' || !activeEmployee.login || !activeEmployee.passwordHash) return res.status(403).json({ error: 'Доступ к кабинету приостановлен' });
-  const tasks = await prisma.task.findMany({ where: { employeeId: req.employeeId }, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
+  const tasks = await prisma.task.findMany({ where: { employeeId: req.employeeId }, include: { reports: { where: { employeeId: req.employeeId }, orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
   res.json(tasks);
 }));
+app.post('/api/employee/tasks/:id/reports', asyncRoute(async (req, res) => {
+  const task = await prisma.task.findFirst({ where: { id: req.params.id, employeeId: req.employeeId } });
+  if (!task) return res.status(404).json({ error: 'Задание не найдено' });
+  if (task.status === 'Выполнено') return res.status(409).json({ error: 'Задание уже принято и закрыто' });
+  const latitude = Number(req.body.latitude), longitude = Number(req.body.longitude);
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) return res.status(400).json({ error: 'Сначала определите местоположение на объекте' });
+  const media = Array.isArray(req.body.media) ? req.body.media : [];
+  if (!media.length) return res.status(400).json({ error: 'Добавьте хотя бы одну фотографию или видеозапись' });
+  if (media.length > 8) return res.status(400).json({ error: 'Можно прикрепить не более 8 файлов' });
+  let totalBytes = 0;
+  for (const item of media) {
+    if (!item || !['image/jpeg','image/png','image/webp','image/heic','video/mp4','video/webm','video/quicktime'].includes(item.type) || typeof item.data !== 'string' || !item.data.startsWith(`data:${item.type};base64,`)) return res.status(400).json({ error: 'Поддерживаются фото JPG, PNG, WEBP, HEIC и видео MP4, WEBM, MOV' });
+    totalBytes += Buffer.from(item.data.split(',')[1], 'base64').length;
+  }
+  if (totalBytes > 18 * 1024 * 1024) return res.status(413).json({ error: 'Общий размер файлов не должен превышать 18 МБ' });
+  const result = 'Фото- и видеоподтверждение выполнения на локации';
+  const comment = null;
+  const hoursSpent = null;
+  const latest = await prisma.taskReport.findFirst({ where: { taskId: task.id, employeeId: req.employeeId }, orderBy: { createdAt: 'desc' } });
+  if (latest?.status === 'На проверке' || latest?.status === 'Принят') return res.status(409).json({ error: 'Отчёт уже находится на проверке или принят' });
+  const report = await prisma.taskReport.create({ data: { taskId: task.id, employeeId: req.employeeId, result, comment, hoursSpent, latitude, longitude, mediaJson: JSON.stringify(media), status: 'На проверке' } });
+  await prisma.task.update({ where: { id: task.id }, data: { status: 'На проверке', completedAt: null } });
+  res.status(201).json(report);
+}));
+
 app.patch('/api/employee/tasks/:id', asyncRoute(async (req, res) => {
   const task = await prisma.task.findFirst({ where: { id: req.params.id, employeeId: req.employeeId } });
   if (!task) return res.status(404).json({ error: 'Задание не найдено' });
   const status = cleanText(req.body.status);
-  if (!['В работе', 'Выполнено'].includes(status)) return res.status(400).json({ error: 'Недопустимый статус задания' });
-  const updated = await prisma.task.update({ where: { id: task.id }, data: { status, employeeComment: cleanText(req.body.employeeComment).slice(0, 2000) || null, completedAt: status === 'Выполнено' ? new Date() : null } });
+  if (status !== 'В работе') return res.status(400).json({ error: 'Завершение задания возможно только после отправки и принятия отчёта' });
+  const updated = await prisma.task.update({ where: { id: task.id }, data: { status, employeeComment: cleanText(req.body.employeeComment).slice(0, 2000) || null, completedAt: null } });
   res.json(updated);
 }));
 
@@ -345,11 +370,31 @@ app.delete('/api/tasks/:id', asyncRoute(async (req, res) => {
 }));
 app.patch('/api/tasks/:id', asyncRoute(async (req, res) => {
   const status = cleanText(req.body.status);
-  if (!['Новое', 'В работе', 'Выполнено'].includes(status)) return res.status(400).json({ error: 'Недопустимый статус задания' });
-  const task = await prisma.task.update({ where: { id: req.params.id }, data: { status, completedAt: status === 'Выполнено' ? new Date() : null }, include: { employee: { include: { branch: true } } } });
+  if (!['Новое', 'В работе', 'Требует доработки'].includes(status)) return res.status(400).json({ error: 'Завершить задание можно только после принятия отчёта' });
+  const task = await prisma.task.update({ where: { id: req.params.id }, data: { status, completedAt: null }, include: { employee: { include: { branch: true } } } });
   res.json(task);
 }));
 
+
+app.get('/api/reports', asyncRoute(async (req, res) => {
+  const reports = await prisma.taskReport.findMany({ include: { task: true, employee: { include: { branch: true } } }, orderBy: [{ status: 'asc' }, { createdAt: 'desc' }] });
+  res.json(reports.map(r => ({ ...r, media: (() => { try { return JSON.parse(r.mediaJson || '[]'); } catch { return []; } })() })));
+}));
+app.patch('/api/reports/:id', asyncRoute(async (req, res) => {
+  const status = cleanText(req.body.status);
+  if (!['Принят', 'Требует доработки'].includes(status)) return res.status(400).json({ error: 'Выберите решение по отчёту' });
+  const report = await prisma.taskReport.findUnique({ where: { id: req.params.id } });
+  if (!report) return res.status(404).json({ error: 'Отчёт не найден' });
+  if (report.status !== 'На проверке') return res.status(409).json({ error: 'Этот отчёт уже проверен' });
+  const adminComment = cleanText(req.body.adminComment).slice(0, 2000) || null;
+  if (status === 'Требует доработки' && !adminComment) return res.status(400).json({ error: 'Укажите, что необходимо исправить' });
+  const updated = await prisma.$transaction(async tx => {
+    const row = await tx.taskReport.update({ where: { id: report.id }, data: { status, adminComment, reviewedAt: new Date() } });
+    await tx.task.update({ where: { id: report.taskId }, data: { status: status === 'Принят' ? 'Выполнено' : 'Требует доработки', completedAt: status === 'Принят' ? new Date() : null } });
+    return row;
+  });
+  res.json(updated);
+}));
 
 app.get('/api/location-selections', asyncRoute(async (req,res) => res.json(await prisma.locationSelection.findMany({
   include:{employee:{include:{branch:true}},location:true},orderBy:[{status:'asc'},{createdAt:'desc'}]
@@ -389,4 +434,4 @@ app.get(/.*/, (req,res,next) => {
   if (req.path.startsWith('/api/')) return next();
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
-app.listen(PORT, '0.0.0.0', () => console.log(`HR Manager server listening on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`ПаркРайт server listening on ${PORT}`));

@@ -42,7 +42,7 @@ try {
     const firstInstall = rows.length === 0;
 
     if (firstInstall) {
-      console.log('Первый запуск HR Manager: инициализируем чистую схему базы данных.');
+      console.log('Первый запуск ПаркРайт: инициализируем чистую схему базы данных.');
       await runCommand('npx', ['prisma', 'db', 'push', '--force-reset', '--accept-data-loss']);
       await runCommand(process.execPath, ['prisma/seed.js']);
       await tx.$executeRaw`INSERT INTO hr_manager_meta.bootstrap (id) VALUES (1) ON CONFLICT (id) DO NOTHING`;
@@ -54,7 +54,7 @@ try {
     }
   }, { maxWait: 30000, timeout: 300000 });
 } catch (error) {
-  console.error('Не удалось подготовить базу данных HR Manager:', error);
+  console.error('Не удалось подготовить базу данных ПаркРайт:', error);
   process.exitCode = 1;
 } finally {
   await prisma.$disconnect();

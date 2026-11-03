@@ -36,6 +36,7 @@ model Employee {
   shifts      Shift[]
   activation  EmployeeActivation?
   tasks       Task[]
+  taskReports TaskReport[]
   locationSelections LocationSelection[]
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
@@ -127,6 +128,7 @@ model Task {
   completedAt DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  reports     TaskReport[]
 }
 
 
@@ -160,3 +162,26 @@ model LocationSelection {
   @@index([locationId, status])
 }
 
+
+
+model TaskReport {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  result      String
+  latitude    Float?
+  longitude   Float?
+  mediaJson   String?
+  hoursSpent  Float?
+  comment     String?
+  status      String   @default("На проверке")
+  adminComment String?
+  reviewedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([status, createdAt])
+  @@index([employeeId, createdAt])
+  @@index([taskId, createdAt])
+}
