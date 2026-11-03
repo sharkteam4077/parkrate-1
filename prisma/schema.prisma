@@ -26,6 +26,8 @@ model Employee {
   login       String?        @unique
   passwordHash String?
   birthDate   DateTime?
+  birthYear   Int?
+  telegramUsername String?
   position    String?
   hireDate    DateTime?
   status      String         @default("Работает")
@@ -97,6 +99,8 @@ model EmployeeApplication {
   fullName  String
   phone     String
   birthDate DateTime?
+  birthYear Int?
+  telegramUsername String?
   position  String?
   hireDate  DateTime?
   notes     String?

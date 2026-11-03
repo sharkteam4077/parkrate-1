@@ -156,7 +156,7 @@ app.use('/api', (req, res, next) => {
 app.get('/api/employee/me', asyncRoute(async (req, res) => {
   const employee = await prisma.employee.findUnique({ where: { id: req.employeeId }, include: { branch: true } });
   if (!employee || employee.status !== 'Работает' || !employee.login || !employee.passwordHash) return res.status(403).json({ error: 'Доступ к кабинету приостановлен' });
-  res.json({ id: employee.id, fullName: employee.fullName, phone: employee.phone, position: employee.position, status: employee.status, hireDate: employee.hireDate, branch: employee.branch?.name, branchCity: employee.branch?.city || employee.branch?.name, login: employee.login });
+  res.json({ id: employee.id, fullName: employee.fullName, phone: employee.phone, birthYear: employee.birthYear, telegramUsername: employee.telegramUsername, position: employee.position, status: employee.status, hireDate: employee.hireDate, branch: employee.branch?.name, branchCity: employee.branch?.city || employee.branch?.name, login: employee.login });
 }));
 app.get('/api/employee/tasks', asyncRoute(async (req, res) => {
   const activeEmployee = await prisma.employee.findUnique({ where: { id: req.employeeId }, select: { status: true, login: true, passwordHash: true } });
@@ -250,13 +250,13 @@ app.post('/api/public/invites/:token/applications', asyncRoute(async (req, res) 
   if (!invite || !invite.active || invite.expiresAt <= new Date() || !invite.branch.active) return res.status(404).json({ error: 'Ссылка недействительна или срок её действия истёк' });
   const fullName = cleanText(req.body.fullName);
   const phone = cleanText(req.body.phone);
-  if (fullName.length < 3 || phone.length < 5) return res.status(400).json({ error: 'Укажите ФИО и корректный номер телефона' });
+  if (fullName.length < 3 || phone.length < 5) return res.status(400).json({ error: 'Укажите фамилию, имя и корректный номер телефона' });
+  const birthYear = req.body.birthYear ? Number.parseInt(req.body.birthYear, 10) : null;
+  if (birthYear !== null && (!Number.isInteger(birthYear) || birthYear < 1900 || birthYear > new Date().getFullYear())) return res.status(400).json({ error: 'Укажите корректный год рождения' });
   const application = await prisma.employeeApplication.create({ data: {
     inviteId: invite.id, branchId: invite.branchId, fullName, phone,
-    birthDate: req.body.birthDate ? new Date(req.body.birthDate) : null,
-    position: cleanText(req.body.position) || null,
-    hireDate: req.body.hireDate ? new Date(req.body.hireDate) : null,
-    notes: cleanText(req.body.notes) || null
+    birthYear: req.body.birthYear ? Number.parseInt(req.body.birthYear, 10) : null,
+    telegramUsername: cleanText(req.body.telegramUsername).replace(/^@/, '') || null
   } });
   res.status(201).json({ ok: true, id: application.id, message: 'Анкета отправлена руководителю на проверку' });
 }));
@@ -280,7 +280,7 @@ app.patch('/api/applications/:id', asyncRoute(async (req, res) => {
   if (status === 'Одобрена') {
     const token = randomBytes(32).toString('base64url');
     await prisma.$transaction(async tx => {
-      const employee = await tx.employee.create({ data: { fullName: application.fullName, phone: application.phone, birthDate: application.birthDate, position: application.position, hireDate: application.hireDate, notes: application.notes, branchId: application.branchId, status: 'Работает' } });
+      const employee = await tx.employee.create({ data: { fullName: application.fullName, phone: application.phone, birthYear: application.birthYear, telegramUsername: application.telegramUsername, branchId: application.branchId, status: 'Работает' } });
       await tx.employeeActivation.create({ data: { employeeId: employee.id, tokenHash: hashToken(token), expiresAt: new Date(Date.now() + 72 * 60 * 60 * 1000) } });
       await tx.employeeApplication.update({ where: { id: application.id }, data: { status, reviewedAt: new Date() } });
     });
