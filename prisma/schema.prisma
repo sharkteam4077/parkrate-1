@@ -127,6 +127,7 @@ model Task {
   title       String
   description String?
   dueDate     DateTime?
+  priority    String   @default("Обычный")
   status      String   @default("Новое")
   employeeComment String?
   completedAt DateTime?

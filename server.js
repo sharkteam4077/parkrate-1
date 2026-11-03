@@ -193,7 +193,7 @@ app.post('/api/employee/tasks/:id/messages', asyncRoute(async (req, res) => {
 app.get('/api/employee/tasks', asyncRoute(async (req, res) => {
   const activeEmployee = await prisma.employee.findUnique({ where: { id: req.employeeId }, select: { status: true, login: true, passwordHash: true } });
   if (!activeEmployee || activeEmployee.status !== 'Работает' || !activeEmployee.login || !activeEmployee.passwordHash) return res.status(403).json({ error: 'Доступ к кабинету приостановлен' });
-  const tasks = await prisma.task.findMany({ where: { employeeId: req.employeeId }, include: { location: true, reports: { where: { employeeId: req.employeeId }, orderBy: { createdAt: 'desc' }, take: 1 } }, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
+  const tasks = await prisma.task.findMany({ where: { employeeId: req.employeeId }, include: { location: true, reports: { where: { employeeId: req.employeeId }, orderBy: { createdAt: 'desc' }, take: 5 } }, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
   res.json(tasks);
 }));
 app.post('/api/employee/tasks/:id/reports/upload-urls', asyncRoute(async (req, res) => {
@@ -423,7 +423,8 @@ app.post('/api/tasks', asyncRoute(async (req, res) => {
   if (!employee || employee.status !== 'Работает') return res.status(404).json({ error: 'Активный сотрудник не найден' });
   const dueDate = req.body.dueDate ? new Date(req.body.dueDate) : null;
   if (dueDate && Number.isNaN(dueDate.getTime())) return res.status(400).json({ error: 'Некорректный срок выполнения' });
-  const task = await prisma.task.create({ data: { employeeId, title, description: description || null, dueDate } , include: { employee: { include: { branch: true } }, location: true } });
+  const priority = ['Низкий', 'Обычный', 'Высокий', 'Срочный'].includes(req.body.priority) ? req.body.priority : 'Обычный';
+  const task = await prisma.task.create({ data: { employeeId, title, description: description || null, dueDate, priority } , include: { employee: { include: { branch: true } }, location: true } });
   res.status(201).json(task);
 }));
 app.delete('/api/tasks/:id', asyncRoute(async (req, res) => {
