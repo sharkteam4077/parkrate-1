@@ -85,7 +85,30 @@ function ChatPanel({taskId,role,compact=false}){
  useEffect(()=>{let alive=true;const refresh=async()=>{try{const rows=await api(endpoint);if(alive){setMessages(rows);setError('');}}catch(e){if(alive)setError(e.message);}finally{if(alive)setLoading(false);}};refresh();const timer=setInterval(refresh,5000);return()=>{alive=false;clearInterval(timer);};},[endpoint]);
  useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:'smooth',block:'end'});},[messages.length]);
  const send=async e=>{e.preventDefault();const body=text.trim();if(!body||sending)return;setSending(true);setError('');try{const created=await api(endpoint,{method:'POST',body:JSON.stringify({body})});setMessages(old=>[...old,created]);setText('');}catch(e){setError(e.message);}finally{setSending(false);}};
- return <section className={`task-chat ${compact?'task-chat-compact':''}`}><div className="task-chat-head"><div className="task-chat-title"><span className="chat-icon"><MessageCircle size={17}/></span><div><b>Чат по заданию</b><small>Сотрудник и ответственный администратор</small></div></div><span className="chat-live-dot">Обновление автоматически</span></div><div className="task-chat-messages">{loading?<div className="chat-empty">Загружаем переписку…</div>:messages.length?messages.map(m=><div key={m.id} className={`chat-message ${m.senderRole===role?'mine':'theirs'}`}><div className="chat-message-meta"><b>{m.senderName}</b><time>{dateTimeText(m.createdAt)}</time></div><p>{m.body}</p></div>):<div className="chat-empty"><MessageCircle size={22}/><b>Пока нет сообщений</b><span>Напишите, если нужно уточнить детали задания.</span></div>}<div ref={bottomRef}/></div>{error&&<div className="chat-error">{error}</div>}<form className="task-chat-compose" onSubmit={send}><textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Напишите сообщение…" rows="1" maxLength="4000" onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send(e);}}}/><button type="submit" disabled={!text.trim()||sending} aria-label="Отправить сообщение"><Send size={17}/></button></form><div className="chat-compose-hint">Enter — отправить · Shift + Enter — новая строка</div></section>
+ return <section className={`task-chat ${compact?'task-chat-compact':''}`}>
+  <div className="task-chat-head">
+    <div className="task-chat-title">
+      <span className="chat-icon"><MessageCircle size={18}/></span>
+      <div><b>Обсуждение задания</b><small>Переписка сотрудника и руководителя</small></div>
+    </div>
+    <span className="chat-live-dot">Синхронизация включена</span>
+  </div>
+  <div className="task-chat-messages">
+    {loading?<div className="chat-empty"><span className="chat-loading-mark"><MessageCircle size={22}/></span><b>Загружаем сообщения</b><span>Секунду, обновляем переписку</span></div>
+    :messages.length?messages.map(m=><div key={m.id} className={`chat-message ${m.senderRole===role?'mine':'theirs'}`}>
+      <div className="chat-message-meta"><b>{m.senderName}</b><time>{dateTimeText(m.createdAt)}</time></div>
+      <p>{m.body}</p>
+    </div>)
+    :<div className="chat-empty"><span className="chat-empty-icon"><MessageCircle size={25}/></span><b>Пока здесь тихо</b><span>Начните диалог — напишите первое сообщение по заданию.</span></div>}
+    <div ref={bottomRef}/>
+  </div>
+  {error&&<div className="chat-error">{error}</div>}
+  <form className="task-chat-compose" onSubmit={send}>
+    <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Напишите сообщение…" rows="1" maxLength="4000" onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send(e);}}}/>
+    <button type="submit" disabled={!text.trim()||sending} aria-label="Отправить сообщение" title="Отправить сообщение">{sending?<span className="chat-send-loading"/>:<Send size={18}/>}</button>
+  </form>
+  <div className="chat-compose-hint"><span>Enter</span> — отправить <i/> <span>Shift + Enter</span> — новая строка</div>
+</section>
 }
 
 function EmployeeApplicationPage({token}) {
