@@ -136,8 +136,9 @@ model Task {
   locationId  String?
   location    Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
   adminUsername String?
-  locationSelectionId String? @unique
+  locationSelectionId String?
   locationSelection LocationSelection? @relation(fields: [locationSelectionId], references: [id], onDelete: SetNull)
+  @@index([locationSelectionId])
 }
 
 
@@ -167,7 +168,7 @@ model LocationSelection {
   reviewedAt  DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  task        Task?
+  tasks       Task[]
   @@index([status, createdAt])
   @@index([employeeId, status])
   @@index([locationId, status])

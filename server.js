@@ -397,7 +397,7 @@ app.patch('/api/reports/:id', asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/location-selections', asyncRoute(async (req,res) => res.json(await prisma.locationSelection.findMany({
-  include:{employee:{include:{branch:true}},location:true,task:true},orderBy:[{status:'asc'},{createdAt:'desc'}]
+  include:{employee:{include:{branch:true}},location:true},orderBy:[{status:'asc'},{createdAt:'desc'}]
 }))));
 app.delete('/api/location-selections/:id', asyncRoute(async (req,res) => {
   const row = await prisma.locationSelection.findUnique({ where: { id: req.params.id } });
@@ -408,7 +408,7 @@ app.delete('/api/location-selections/:id', asyncRoute(async (req,res) => {
 app.patch('/api/location-selections/:id', asyncRoute(async (req,res) => {
   const status=cleanText(req.body.status);
   if(!['Одобрена','Отклонена'].includes(status)) return res.status(400).json({error:'Недопустимое решение'});
-  const current=await prisma.locationSelection.findUnique({where:{id:req.params.id},include:{employee:true,location:true,task:true}});
+  const current=await prisma.locationSelection.findUnique({where:{id:req.params.id},include:{employee:true,location:true}});
   if(!current) return res.status(404).json({error:'Запрос не найден'});
   if(current.status!=='На проверке') return res.status(409).json({error:'Запрос уже рассмотрен'});
   if(status==='Одобрена'){
@@ -416,25 +416,32 @@ app.patch('/api/location-selections/:id', asyncRoute(async (req,res) => {
     if(conflict) return res.status(409).json({error:'Объект уже одобрен другому сотруднику'});
   }
   const result = await prisma.$transaction(async tx => {
-    const updated = await tx.locationSelection.update({where:{id:current.id},data:{status,adminComment:cleanText(req.body.adminComment).slice(0,1000)||null,reviewedAt:new Date()}});
+    // The selection link is indexed but deliberately not UNIQUE: older databases may
+    // contain duplicate links. Idempotency is enforced here without destructive db push.
+    const existingTask = status === 'Одобрена'
+      ? await tx.task.findFirst({where:{locationSelectionId:current.id},include:{employee:{include:{branch:true}},location:true}})
+      : null;
+    const changed = await tx.locationSelection.updateMany({
+      where:{id:current.id,status:'На проверке'},
+      data:{status,adminComment:cleanText(req.body.adminComment).slice(0,1000)||null,reviewedAt:new Date()}
+    });
+    if (changed.count !== 1) return { conflict: true };
     let task = null;
     if (status === 'Одобрена') {
-      task = await tx.task.create({data:{
+      task = existingTask || await tx.task.create({data:{
         employeeId: current.employeeId,
         title: `Работа на объекте: ${current.location.district || current.location.city || 'Выбранная локация'}`,
-        description: `Выполнить работу на выбранном объекте.
-Объект: ${current.location.district || '—'}
-Город: ${current.location.city || '—'}
-Регион: ${current.location.region || '—'}
-Координаты: ${current.location.latitude}, ${current.location.longitude}`,
+        description: `Выполнить работу на выбранном объекте.\nОбъект: ${current.location.district || '—'}\nГород: ${current.location.city || '—'}\nРегион: ${current.location.region || '—'}\nКоординаты: ${current.location.latitude}, ${current.location.longitude}`,
         locationId: current.locationId,
         adminUsername: ADMIN_USERNAME,
         locationSelectionId: current.id,
         status: 'Новое'
       }, include:{employee:{include:{branch:true}},location:true}});
     }
+    const updated = await tx.locationSelection.findUnique({where:{id:current.id}});
     return { ...updated, task };
   });
+  if (result.conflict) return res.status(409).json({error:'Заявка уже была рассмотрена другим запросом'});
   res.json({...result, employee:current.employee, location:current.location});
 }));
 
