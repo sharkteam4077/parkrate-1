@@ -133,6 +133,7 @@ model Task {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   reports     TaskReport[]
+  chatMessages ChatMessage[]
   locationId  String?
   location    Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
   adminUsername String?
@@ -195,5 +196,18 @@ model TaskReport {
   updatedAt   DateTime @updatedAt
   @@index([status, createdAt])
   @@index([employeeId, createdAt])
+  @@index([taskId, createdAt])
+}
+
+
+model ChatMessage {
+  id         String   @id @default(cuid())
+  taskId     String
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  senderRole String
+  senderId   String
+  senderName String
+  body       String
+  createdAt  DateTime @default(now())
   @@index([taskId, createdAt])
 }

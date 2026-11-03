@@ -174,6 +174,22 @@ app.get('/api/employee/me', asyncRoute(async (req, res) => {
   if (!employee || employee.status !== 'Работает' || !employee.login || !employee.passwordHash) return res.status(403).json({ error: 'Доступ к кабинету приостановлен' });
   res.json({ id: employee.id, fullName: employee.fullName, phone: employee.phone, birthYear: employee.birthYear, telegramUsername: employee.telegramUsername, position: employee.position, status: employee.status, hireDate: employee.hireDate, branch: employee.branch?.name, branchCity: employee.branch?.city || employee.branch?.name, login: employee.login });
 }));
+app.get('/api/employee/tasks/:id/messages', asyncRoute(async (req, res) => {
+  const task = await prisma.task.findFirst({ where: { id: req.params.id, employeeId: req.employeeId }, select: { id: true } });
+  if (!task) return res.status(404).json({ error: 'Задание не найдено' });
+  const after = req.query.after ? new Date(req.query.after) : null;
+  const messages = await prisma.chatMessage.findMany({ where: { taskId: task.id, ...(after && !Number.isNaN(after.getTime()) ? { createdAt: { gt: after } } : {}) }, orderBy: { createdAt: 'asc' }, take: 200 });
+  res.json(messages);
+}));
+app.post('/api/employee/tasks/:id/messages', asyncRoute(async (req, res) => {
+  const task = await prisma.task.findFirst({ where: { id: req.params.id, employeeId: req.employeeId }, include: { employee: { select: { fullName: true } } } });
+  if (!task) return res.status(404).json({ error: 'Задание не найдено' });
+  const body = cleanText(req.body.body).slice(0, 4000);
+  if (!body) return res.status(400).json({ error: 'Введите сообщение' });
+  const message = await prisma.chatMessage.create({ data: { taskId: task.id, senderRole: 'employee', senderId: req.employeeId, senderName: task.employee.fullName, body } });
+  res.status(201).json(message);
+}));
+
 app.get('/api/employee/tasks', asyncRoute(async (req, res) => {
   const activeEmployee = await prisma.employee.findUnique({ where: { id: req.employeeId }, select: { status: true, login: true, passwordHash: true } });
   if (!activeEmployee || activeEmployee.status !== 'Работает' || !activeEmployee.login || !activeEmployee.passwordHash) return res.status(403).json({ error: 'Доступ к кабинету приостановлен' });
@@ -378,6 +394,22 @@ app.patch('/api/employees/:id', asyncRoute(async (req,res) => {
   if (req.body.hireDate !== undefined) data.hireDate = req.body.hireDate ? new Date(req.body.hireDate) : null;
   const updated = await prisma.employee.update({ where: { id: req.params.id }, data, include: { branch: true } }); const { passwordHash, ...safeEmployee } = updated; res.json(safeEmployee);
 }));
+app.get('/api/tasks/:id/messages', asyncRoute(async (req, res) => {
+  const task = await prisma.task.findUnique({ where: { id: req.params.id }, select: { id: true } });
+  if (!task) return res.status(404).json({ error: 'Задание не найдено' });
+  const after = req.query.after ? new Date(req.query.after) : null;
+  const messages = await prisma.chatMessage.findMany({ where: { taskId: task.id, ...(after && !Number.isNaN(after.getTime()) ? { createdAt: { gt: after } } : {}) }, orderBy: { createdAt: 'asc' }, take: 200 });
+  res.json(messages);
+}));
+app.post('/api/tasks/:id/messages', asyncRoute(async (req, res) => {
+  const task = await prisma.task.findUnique({ where: { id: req.params.id } });
+  if (!task) return res.status(404).json({ error: 'Задание не найдено' });
+  const body = cleanText(req.body.body).slice(0, 4000);
+  if (!body) return res.status(400).json({ error: 'Введите сообщение' });
+  const message = await prisma.chatMessage.create({ data: { taskId: task.id, senderRole: 'admin', senderId: ADMIN_USERNAME, senderName: ADMIN_USERNAME, body } });
+  res.status(201).json(message);
+}));
+
 app.get('/api/tasks', asyncRoute(async (req, res) => {
   const tasks = await prisma.task.findMany({ include: { employee: { include: { branch: true } }, location: true, locationSelection: true }, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
   res.json(tasks);
