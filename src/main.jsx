@@ -55,29 +55,6 @@ const sniffReportMediaType = async file => {
   if (ascii(0, 4) === 'RIFF' && ascii(8, 3) === 'AVI') return 'video/x-msvideo';
   return '';
 };
-const handleReportFilesSelected = async (taskId, event) => {
-  const input = event.currentTarget;
-  const selectedFiles = Array.from(input.files || []);
-  if (!selectedFiles.length) return;
-  input.value = '';
-  const checked = await Promise.all(selectedFiles.map(async file => {
-    if (reportMediaType(file)) return file;
-    try { file.__parkrightMediaType = await sniffReportMediaType(file); } catch {}
-    return file;
-  }));
-  const picked = checked.filter(file => reportMediaType(file));
-  const rejected = checked.length - picked.length;
-  if (picked.length) {
-    setReportForms(old => {
-      const current = old[taskId]?.files || [];
-      const seen = new Set(current.map(file => `${file.name}:${file.size}:${file.lastModified}`));
-      const additions = picked.filter(file => !seen.has(`${file.name}:${file.size}:${file.lastModified}`));
-      return { ...old, [taskId]: { ...old[taskId], files: [...current, ...additions] } };
-    });
-  }
-  setError(rejected ? `Не удалось распознать ${rejected} файл(ов). Выберите фото или видео в распространённом формате.` : '');
-};
-
 
 function App({onLogout}) {
   const [page,setPage]=useState('overview'), [mobileOpen,setMobileOpen]=useState(false);
@@ -217,6 +194,36 @@ function EmployeeLoginPage({onLogin}) {
 function EmployeeCabinet({onLogout}) {
  const [profile,setProfile]=useState(null),[tasks,setTasks]=useState([]),[error,setError]=useState(''),[comments,setComments]=useState({}),[reportForms,setReportForms]=useState({}),[busyId,setBusyId]=useState('');
  const reportFileInputs=useRef({});
+ // Keep this handler inside EmployeeCabinet: it needs this component's state setters.
+ const handleReportFilesSelected = async (taskId, event) => {
+  const input = event.currentTarget;
+  const selectedFiles = Array.from(input?.files || []);
+  // Reset immediately so selecting the same file again also fires change.
+  if (input) input.value = '';
+  if (!selectedFiles.length) return;
+  setError('');
+  try {
+   const checked = await Promise.all(selectedFiles.map(async file => {
+    if (reportMediaType(file)) return file;
+    try { file.__parkrightMediaType = await sniffReportMediaType(file); } catch {}
+    return file;
+   }));
+   const picked = checked.filter(file => reportMediaType(file));
+   const rejected = checked.length - picked.length;
+   if (picked.length) {
+    setReportForms(old => {
+     const current = old[taskId]?.files || [];
+     const seen = new Set(current.map(file => `${file.name}:${file.size}:${file.lastModified}`));
+     const additions = picked.filter(file => !seen.has(`${file.name}:${file.size}:${file.lastModified}`));
+     return { ...old, [taskId]: { ...old[taskId], files: [...current, ...additions] } };
+    });
+   }
+   if (rejected) setError(`Не удалось распознать ${rejected} файл(ов). Поддерживаются фото JPG, PNG, HEIC, HEIF и видео MP4, MOV, WEBM и другие распространённые форматы.`);
+   else if (!picked.length) setError('Галерея не передала файлы. Попробуйте выбрать фотографии ещё раз или использовать кнопку «Обзор» в файловом менеджере телефона.');
+  } catch (err) {
+   setError(`Не удалось добавить выбранные файлы: ${err?.message || 'неизвестная ошибка'}`);
+  }
+ };
  const [locations,setLocations]=useState([]),[selections,setSelections]=useState([]),[selected,setSelected]=useState(null);
  const [workerPosition,setWorkerPosition]=useState(null),[geoStatus,setGeoStatus]=useState(''),[refreshing,setRefreshing]=useState(false),[section,setSection]=useState('home');
  const load=async()=>{try{const [p,t,s]=await Promise.all([api('/employee/me'),api('/employee/tasks'),api('/employee/location-selections')]);setProfile(p);setTasks(t);setSelections(s);return true;}catch(e){setError(e.message);return false;}};
