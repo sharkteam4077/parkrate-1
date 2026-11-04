@@ -82,7 +82,21 @@ function TaskTable({tasks,onStatus,onDelete}){
  const [openChat,setOpenChat]=useState('');
  const selectedTask=tasks.find(t=>t.id===openChat);
  return <div className="task-table-section">
-  <div className="table-wrap"><table><thead><tr><th>ЗАДАНИЕ / ЛОКАЦИЯ</th><th>ИСПОЛНИТЕЛЬ</th><th>АДМИНИСТРАТОР</th><th>СРОК</th><th>СТАТУС</th><th>ДЕЙСТВИЕ</th><th></th></tr></thead><tbody>{tasks.map(t=><tr key={t.id}><td><b>{t.title}</b>{t.location&&<small className="subline">{[t.location.district,t.location.city,t.location.region].filter(Boolean).join(', ')} · <a target="_blank" rel="noreferrer" href={`https://www.google.com/maps?q=${t.location.latitude},${t.location.longitude}`}>На карте</a></small>}{t.description&&<small className="subline">{t.description}</small>}</td><td>{t.employee?.fullName||'—'}<small className="subline">{t.employee?.branch?.name||''}</small></td><td>{t.adminUsername||'—'}</td><td>{dateText(t.dueDate)}</td><td><span className={`pill ${t.status==='Выполнено'?'success':['В работе','На проверке'].includes(t.status)?'warning':'muted'}`}>{t.status}</span></td><td>{['Выполнено','На проверке'].includes(t.status)?(t.status==='Выполнено'?'Готово':'Отчёт на проверке'):<select value={t.status} onChange={e=>onStatus(t,e.target.value)}><option value="Новое">Новое</option><option value="В работе">В работе</option><option value="Требует доработки">Требует доработки</option></select>}</td><td><div className="task-row-actions"><button className={`icon-btn chat-toggle ${openChat===t.id?'active':''}`} title="Открыть чат задания" onClick={()=>setOpenChat(openChat===t.id?'':t.id)}><MessageCircle size={16}/></button><button className="icon-btn delete-icon" title="Удалить задание" onClick={()=>onDelete?.(t)}><Trash2 size={16}/></button></div></td></tr>)}</tbody></table></div>
+   <div className="admin-task-list">{tasks.map(t=><article className="admin-task-card" key={t.id}>
+    <div className="admin-task-main">
+     <div className="admin-task-title-row"><b>{t.title}</b><span className={`pill ${t.status==='Выполнено'?'success':['В работе','На проверке'].includes(t.status)?'warning':'muted'}`}>{t.status}</span></div>
+     {t.location&&<div className="admin-task-location">{[t.location.district,t.location.city,t.location.region].filter(Boolean).join(', ')} <a target="_blank" rel="noreferrer" href={`https://www.google.com/maps?q=${t.location.latitude},${t.location.longitude}`}>Открыть карту ↗</a></div>}
+     {t.description&&<p className="admin-task-description">{t.description}</p>}
+    </div>
+    <div className="admin-task-details">
+     <div><span>ИСПОЛНИТЕЛЬ</span><b>{t.employee?.fullName||'—'}</b><small>{t.employee?.branch?.name||'Филиал не указан'}</small></div>
+     <div><span>АДМИНИСТРАТОР</span><b>{t.adminUsername||'—'}</b></div>
+     <div><span>СРОК</span><b>{dateText(t.dueDate)}</b></div>
+     <div className="admin-task-controls">{['Выполнено','На проверке'].includes(t.status)?<small>{t.status==='Выполнено'?'Готово':'Отчёт на проверке'}</small>:<select value={t.status} onChange={e=>onStatus(t,e.target.value)}><option value="Новое">Новое</option><option value="В работе">В работе</option><option value="Требует доработки">Требует доработки</option></select>}
+      <div className="task-row-actions"><button className={`icon-btn chat-toggle ${openChat===t.id?'active':''}`} title="Открыть чат задания" onClick={()=>setOpenChat(openChat===t.id?'':t.id)}><MessageCircle size={16}/></button><button className="icon-btn delete-icon" title="Удалить задание" onClick={()=>onDelete?.(t)}><Trash2 size={16}/></button></div>
+     </div>
+    </div>
+   </article>)}</div>
   {selectedTask&&<div className="task-chat-standalone"><div className="task-chat-context"><div><span>ЧАТ ПО ЗАДАНИЮ</span><b>{selectedTask.title}</b><small>{selectedTask.employee?.fullName||'Сотрудник не указан'} · {selectedTask.employee?.branch?.name||'Филиал не указан'}</small></div><button type="button" onClick={()=>setOpenChat('')} aria-label="Закрыть чат">×</button></div><ChatPanel taskId={selectedTask.id} role="admin" compact/></div>}
  </div>
 }
