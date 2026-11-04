@@ -25,6 +25,22 @@ function getB2Client() {
   return b2Client;
 }
 const b2Bucket = () => process.env.B2_BUCKET_NAME;
+
+// Cloudinary: API secret остаётся только на сервере. Клиент получает короткоживущую
+// подпись для загрузки конкретного файла в папку конкретного задания.
+const cloudinaryConfigured = Boolean(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
+function requireCloudinary() {
+  if (!cloudinaryConfigured) throw new Error('Cloudinary не настроен. Добавьте CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY и CLOUDINARY_API_SECRET в Railway.');
+}
+function cloudinarySignature(params) {
+  const payload = Object.keys(params).sort().map(key => `${key}=${params[key]}`).join('&');
+  return createHash('sha1').update(payload + process.env.CLOUDINARY_API_SECRET).digest('hex');
+}
+function safeEqualHex(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || !/^[a-f0-9]+$/i.test(a) || !/^[a-f0-9]+$/i.test(b)) return false;
+  const left = Buffer.from(a, 'hex'); const right = Buffer.from(b, 'hex');
+  return left.length === right.length && timingSafeEqual(left, right);
+}
 const REPORT_MEDIA_TYPES = {
   jpg:'image/jpeg', jpeg:'image/jpeg', jpe:'image/jpeg', png:'image/png', gif:'image/gif',
   webp:'image/webp', bmp:'image/bmp', tif:'image/tiff', tiff:'image/tiff', heic:'image/heic',
@@ -217,18 +233,20 @@ app.post('/api/employee/tasks/:id/reports/upload-urls', asyncRoute(async (req, r
   const task = await prisma.task.findFirst({ where: { id: req.params.id, employeeId: req.employeeId } });
   if (!task) return res.status(404).json({ error: 'Задание не найдено' });
   if (task.status === 'Выполнено') return res.status(409).json({ error: 'Задание уже принято и закрыто' });
+  requireCloudinary();
   const files = Array.isArray(req.body.files) ? req.body.files : [];
   if (!files.length) return res.status(400).json({ error: 'Выберите фотографии или видео' });
-  const s3 = getB2Client();
-  const uploads = await Promise.all(files.map(async file => {
+  if (files.length > 30) return res.status(400).json({ error: 'Можно загрузить не более 30 файлов за один отчёт' });
+  const timestamp = Math.floor(Date.now() / 1000);
+  const uploads = files.map(file => {
     const type = resolveReportMediaType(file);
     if (!type) throw new Error(`Не удалось определить формат файла «${String(file?.name || 'без названия')}». Выберите фото или видео в поддерживаемом формате.`);
+    const resourceType = type.startsWith('video/') ? 'video' : 'image';
     const name = String(file?.name || 'file').slice(0, 240);
-    const key = `reports/${req.employeeId}/${task.id}/${randomUUID()}`;
-    const command = new PutObjectCommand({ Bucket: b2Bucket(), Key: key, ContentType: type });
-    const url = await getSignedUrl(s3, command, { expiresIn: 900 });
-    return { key, url, headers: { 'Content-Type': type }, type, name, size: Number(file?.size) || 0 };
-  }));
+    const publicId = `reports/${req.employeeId}/${task.id}/${resourceType}/${randomUUID()}`;
+    const params = { public_id: publicId, timestamp };
+    return { publicId, url: `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`, signature: cloudinarySignature(params), apiKey: process.env.CLOUDINARY_API_KEY, timestamp, resourceType, type, name, size: Number(file?.size) || 0 };
+  });
   res.json({ uploads });
 }));
 
@@ -243,10 +261,27 @@ app.post('/api/employee/tasks/:id/reports', asyncRoute(async (req, res) => {
   if ((latitude !== null || longitude !== null) && !(hasLatitude && hasLongitude)) return res.status(400).json({ error: 'Координаты указаны некорректно. Удалите геопозицию или определите её повторно.' });
   const media = Array.isArray(req.body.media) ? req.body.media : [];
   if (!media.length) return res.status(400).json({ error: 'Добавьте хотя бы одну фотографию или видеозапись' });
-  const s3 = getB2Client();
   const verifiedMedia = await Promise.all(media.map(async item => {
     const resolvedType = resolveReportMediaType(item);
-    if (!item || typeof item.key !== 'string' || !item.key.startsWith(`reports/${req.employeeId}/${task.id}/`) || !resolvedType) throw new Error('Некорректные данные вложения. Загрузите файлы повторно.');
+    if (!item || !resolvedType) throw new Error('Некорректные данные вложения. Загрузите файлы повторно.');
+    // Новые вложения хранятся в Cloudinary. Подпись ответа Cloudinary
+    // подтверждает, что файл действительно был загружен с нашим API secret.
+    if (typeof item.public_id === 'string') {
+      requireCloudinary();
+      const expectedPrefix = `reports/${req.employeeId}/${task.id}/${resourceType}/`;
+      const resourceType = resolvedType.startsWith('video/') ? 'video' : 'image';
+      if (!item.public_id.startsWith(expectedPrefix) || item.resource_type !== resourceType ||
+          !Number.isInteger(Number(item.version)) || !/^https:\/\/res\.cloudinary\.com\//.test(String(item.secure_url || ''))) {
+        throw new Error('Некорректные данные Cloudinary. Загрузите файлы повторно.');
+      }
+      const responseSignature = cloudinarySignature({ public_id: item.public_id, version: String(item.version) });
+      if (!safeEqualHex(item.signature, responseSignature)) throw new Error('Не удалось подтвердить загрузку файла в Cloudinary. Загрузите файлы повторно.');
+      const secureUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/${resourceType}/upload/v${Number(item.version)}/${item.public_id}`;
+      return { provider: 'cloudinary', public_id: item.public_id, resource_type: resourceType, version: Number(item.version), secure_url: secureUrl, signature: item.signature, type: resolvedType, name: String(item.name || 'file').slice(0, 240), size: Number(item.bytes) || Number(item.size) || 0 };
+    }
+    // Старые отчёты и уже начатые загрузки из B2 продолжают поддерживаться.
+    if (typeof item.key !== 'string' || !item.key.startsWith(`reports/${req.employeeId}/${task.id}/`)) throw new Error('Некорректные данные вложения. Загрузите файлы повторно.');
+    const s3 = getB2Client();
     const head = await s3.send(new HeadObjectCommand({ Bucket: b2Bucket(), Key: item.key }));
     if (!head.ContentLength) throw new Error('Одно из вложений не найдено в хранилище. Повторите загрузку.');
     return { key: item.key, type: resolvedType, name: String(item.name || 'file').slice(0, 240), size: head.ContentLength };
@@ -468,6 +503,7 @@ app.get('/api/reports', asyncRoute(async (req, res) => {
   const result = await Promise.all(reports.map(async r => {
     let media = []; try { media = JSON.parse(r.mediaJson || '[]'); } catch {}
     media = await Promise.all(media.map(async item => {
+      if (item?.provider === 'cloudinary' && item.secure_url) return { ...item, data: item.secure_url };
       if (!item?.key || !s3) return item;
       const data = await getSignedUrl(s3, new GetObjectCommand({ Bucket: b2Bucket(), Key: item.key }), { expiresIn: 3600 });
       return { ...item, data };
