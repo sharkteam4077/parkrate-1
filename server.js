@@ -317,7 +317,7 @@ app.get('/api/invites', asyncRoute(async (req, res) => res.json(await prisma.emp
 app.delete('/api/applications/:id', asyncRoute(async (req, res) => {
   const row = await prisma.employeeApplication.findUnique({ where: { id: req.params.id } });
   if (!row) return res.status(404).json({ error: 'Анкета не найдена' });
-  if (row.status === 'Одобрена') return res.status(409).json({ error: 'Одобренная анкета связана с созданным сотрудником. Удалите сотрудника отдельно; история анкеты сохранена.' });
+  // Удаляем только анкету. Созданный сотрудник и связанные с ним данные не затрагиваются.
   await prisma.employeeApplication.delete({ where: { id: row.id } });
   res.json({ ok: true });
 }));
