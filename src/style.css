@@ -426,3 +426,15 @@
 @media(max-width:520px){
   .admin-task-controls select{min-width:0;max-width:calc(100% - 90px);flex:1}
 }
+
+/* Reliable file picker activation in mobile browsers and Telegram in-app webviews */
+.report-file-button{
+  appearance:none;
+  -webkit-appearance:none;
+  font:inherit;
+  touch-action:manipulation;
+  -webkit-tap-highlight-color:transparent;
+  user-select:none;
+}
+.report-file-button:disabled{opacity:.55;cursor:not-allowed;transform:none}
+.report-file-input:focus-visible + .report-file-button{outline:2px solid #1688f8;outline-offset:3px}
