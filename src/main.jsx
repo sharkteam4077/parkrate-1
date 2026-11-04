@@ -17,21 +17,65 @@ const api = async (url, options={}) => {
 const money = n => new Intl.NumberFormat('ru-RU',{style:'currency',currency:'RUB',maximumFractionDigits:0}).format(Number(n||0));
 const dateText = d => d ? new Date(d).toLocaleDateString('ru-RU') : '—';
 const dateTimeText = d => d ? new Date(d).toLocaleString('ru-RU', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—';
+const REPORT_MEDIA_TYPES = {
+  jpg:'image/jpeg', jpeg:'image/jpeg', jpe:'image/jpeg', png:'image/png',
+  gif:'image/gif', webp:'image/webp', bmp:'image/bmp', tif:'image/tiff',
+  tiff:'image/tiff', heic:'image/heic', heif:'image/heif', avif:'image/avif',
+  dng:'image/x-adobe-dng',
+  mp4:'video/mp4', m4v:'video/mp4', mov:'video/quicktime', qt:'video/quicktime',
+  webm:'video/webm', avi:'video/x-msvideo', mkv:'video/x-matroska',
+  '3gp':'video/3gpp', '3g2':'video/3gpp2', mts:'video/mp2t',
+  mpeg:'video/mpeg', mpg:'video/mpeg', m4v:'video/mp4'
+};
 const reportMediaType = file => {
-  const mime = String(file?.type || '').toLowerCase();
-  if (/^(image|video)\//.test(mime)) return mime;
-  const ext = String(file?.name || '').split('.').pop().toLowerCase();
-  const types = {
-    jpg:'image/jpeg', jpeg:'image/jpeg', jpe:'image/jpeg', png:'image/png',
-    gif:'image/gif', webp:'image/webp', bmp:'image/bmp', tif:'image/tiff',
-    tiff:'image/tiff', heic:'image/heic', heif:'image/heif', avif:'image/avif',
-    dng:'image/x-adobe-dng',
-    mp4:'video/mp4', m4v:'video/x-m4v', mov:'video/quicktime',
-    qt:'video/quicktime', webm:'video/webm', avi:'video/x-msvideo',
-    mkv:'video/x-matroska', '3gp':'video/3gpp', '3g2':'video/3gpp2',
-    mts:'video/mp2t', mpeg:'video/mpeg', mpg:'video/mpeg'
-  };
-  return types[ext] || '';
+  if (file?.__parkrightMediaType) return file.__parkrightMediaType;
+  const mime = String(file?.type || '').trim().toLowerCase().split(';')[0];
+  if (/^image\//.test(mime)) return mime === 'image/jpg' ? 'image/jpeg' : mime;
+  if (/^video\//.test(mime)) return mime === 'video/quicktime' ? mime : mime;
+  const name = String(file?.name || '');
+  const dot = name.lastIndexOf('.');
+  const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+  return REPORT_MEDIA_TYPES[ext] || '';
+};
+const sniffReportMediaType = async file => {
+  const bytes = new Uint8Array(await file.slice(0, 32).arrayBuffer());
+  const ascii = (start, length) => String.fromCharCode(...bytes.slice(start, start + length));
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes[0] === 0x89 && ascii(1, 3) === 'PNG') return 'image/png';
+  if (ascii(0, 3) === 'GIF') return 'image/gif';
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 4) === 'WEBP') return 'image/webp';
+  if (ascii(0, 4) === 'II*\0' || ascii(0, 4) === 'MM\0*') return 'image/tiff';
+  if (ascii(4, 4) === 'ftyp') {
+    const brand = ascii(8, 4).toLowerCase();
+    if (['avif','avis'].includes(brand)) return 'image/avif';
+    if (['heic','heix','hevc','hevx','mif1','msf1'].includes(brand)) return 'image/heic';
+    return 'video/mp4';
+  }
+  if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) return 'video/webm';
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 3) === 'AVI') return 'video/x-msvideo';
+  return '';
+};
+const handleReportFilesSelected = async (taskId, event) => {
+  const input = event.currentTarget;
+  const selectedFiles = Array.from(input.files || []);
+  if (!selectedFiles.length) return;
+  input.value = '';
+  const checked = await Promise.all(selectedFiles.map(async file => {
+    if (reportMediaType(file)) return file;
+    try { file.__parkrightMediaType = await sniffReportMediaType(file); } catch {}
+    return file;
+  }));
+  const picked = checked.filter(file => reportMediaType(file));
+  const rejected = checked.length - picked.length;
+  if (picked.length) {
+    setReportForms(old => {
+      const current = old[taskId]?.files || [];
+      const seen = new Set(current.map(file => `${file.name}:${file.size}:${file.lastModified}`));
+      const additions = picked.filter(file => !seen.has(`${file.name}:${file.size}:${file.lastModified}`));
+      return { ...old, [taskId]: { ...old[taskId], files: [...current, ...additions] } };
+    });
+  }
+  setError(rejected ? `Не удалось распознать ${rejected} файл(ов). Выберите фото или видео в распространённом формате.` : '');
 };
 
 
@@ -226,7 +270,7 @@ function EmployeeCabinet({onLogout}) {
    {t.description&&<p className="task-description">{t.description}</p>}
    {t.reports?.length>0&&<div className="employee-report-history"><div className="employee-report-history-title"><b>История отчётов</b><span>{t.reports.length}</span></div>{t.reports.map((r,i)=><div className="employee-report-entry" key={r.id}><div><b>Отчёт {t.reports.length-i}</b><small>{dateTimeText(r.createdAt)}</small></div><span className={`pill ${r.status==='Принят'?'success':r.status==='На проверке'?'warning':'muted'}`}>{r.status}</span>{r.adminComment&&<p>Комментарий руководителя: {r.adminComment}</p>}</div>)}</div>}
    <ChatPanel taskId={t.id} role="employee"/>
-   {t.status!=='Выполнено'&&latest?.status!=='На проверке'?<><div className="task-report-form"><div className="report-location-capture"><b>1. Местоположение <span className="optional-field-label">необязательно</span></b><button type="button" className="secondary-btn" disabled={busyId===t.id} onClick={()=>captureReportPosition(t)}><MapPin size={15}/> {reportForms[t.id]?.position?'Обновить координаты':'Добавить местоположение'}</button>{reportForms[t.id]?.position?<small>Координаты зафиксированы: {reportForms[t.id].position.latitude.toFixed(6)}, {reportForms[t.id].position.longitude.toFixed(6)}</small>:<small>Можно отправить отчёт без геопозиции.</small>}</div><div className="task-comment-label report-file-picker"><b>2. Приложите фото или видео</b><input ref={el=>{reportFileInputs.current[t.id]=el;}} id={`report-files-${t.id}`} className="report-file-input" type="file" accept="image/*,video/*,.heic,.heif,.avif,.dng,.mov,.mp4,.m4v,.webm,.avi,.mkv,.3gp,.3g2,.mts" multiple onChange={e=>{const input=e.currentTarget;const selectedFiles=Array.from(input.files||[]);const picked=selectedFiles.filter(file=>reportMediaType(file));const rejected=selectedFiles.length-picked.length;if(picked.length){setReportForms(old=>({...old,[t.id]:{...old[t.id],files:[...(old[t.id]?.files||[]),...picked]}}));}if(rejected){setError(`Не удалось распознать ${rejected} файл(ов). Выберите фото или видео в распространённом формате.`);}input.value='';}}/><button type="button" className="report-file-button" disabled={busyId===t.id} onClick={()=>reportFileInputs.current[t.id]?.click()}><Plus size={16}/> Добавить фото или видео</button><small>Можно выбрать несколько файлов. Поддерживаются изображения и видео.</small>{reportForms[t.id]?.files?.length>0&&<div className="report-selected-files">{reportForms[t.id].files.map((file,index)=><div className="report-selected-file" key={`${file.name}-${file.size}-${index}`}><span><FileSpreadsheet size={14}/><b>{file.name}</b><small>{(file.size/1024/1024).toFixed(1)} МБ</small></span><button type="button" aria-label={`Удалить ${file.name}`} title="Убрать файл" onClick={()=>setReportForms(old=>({...old,[t.id]:{...old[t.id],files:old[t.id].files.filter((_,i)=>i!==index)}}))}><X size={14}/></button></div>)}</div>}</div></div><div className="inline-actions"><button className="primary-btn" disabled={busyId===t.id||!reportForms[t.id]?.files?.length} onClick={()=>submitTaskReport(t)}>{busyId===t.id?'Отправка...':'Отправить отчёт руководителю'}</button></div></>:t.status==='Выполнено'?<p className="employee-footnote">Отчёт принят. Задание завершено.</p>:<p className="employee-footnote">Отчёт отправлен руководителю. После проверки появится решение или комментарий.</p>}
+   {t.status!=='Выполнено'&&latest?.status!=='На проверке'?<><div className="task-report-form"><div className="report-location-capture"><b>1. Местоположение <span className="optional-field-label">необязательно</span></b><button type="button" className="secondary-btn" disabled={busyId===t.id} onClick={()=>captureReportPosition(t)}><MapPin size={15}/> {reportForms[t.id]?.position?'Обновить координаты':'Добавить местоположение'}</button>{reportForms[t.id]?.position?<small>Координаты зафиксированы: {reportForms[t.id].position.latitude.toFixed(6)}, {reportForms[t.id].position.longitude.toFixed(6)}</small>:<small>Можно отправить отчёт без геопозиции.</small>}</div><div className="task-comment-label report-file-picker"><b>2. Приложите фото или видео</b><input ref={el=>{reportFileInputs.current[t.id]=el;}} id={`report-files-${t.id}`} className="report-file-input" type="file" accept="image/*,video/*,.heic,.heif,.avif,.dng,.mov,.mp4,.m4v,.webm,.avi,.mkv,.3gp,.3g2,.mts" multiple onChange={e=>handleReportFilesSelected(t.id,e)}/><button type="button" className="report-file-button" disabled={busyId===t.id} onClick={()=>reportFileInputs.current[t.id]?.click()}><Plus size={16}/> Добавить фото или видео</button><small>Можно выбрать несколько файлов. Поддерживаются изображения и видео.</small>{reportForms[t.id]?.files?.length>0&&<div className="report-selected-files">{reportForms[t.id].files.map((file,index)=><div className="report-selected-file" key={`${file.name}-${file.size}-${index}`}><span><FileSpreadsheet size={14}/><b>{file.name}</b><small>{(file.size/1024/1024).toFixed(1)} МБ</small></span><button type="button" aria-label={`Удалить ${file.name}`} title="Убрать файл" onClick={()=>setReportForms(old=>({...old,[t.id]:{...old[t.id],files:old[t.id].files.filter((_,i)=>i!==index)}}))}><X size={14}/></button></div>)}</div>}</div></div><div className="inline-actions"><button className="primary-btn" disabled={busyId===t.id||!reportForms[t.id]?.files?.length} onClick={()=>submitTaskReport(t)}>{busyId===t.id?'Отправка...':'Отправить отчёт руководителю'}</button></div></>:t.status==='Выполнено'?<p className="employee-footnote">Отчёт принят. Задание завершено.</p>:<p className="employee-footnote">Отчёт отправлен руководителю. После проверки появится решение или комментарий.</p>}
   </article>;
  };
  return <div className="employee-cabinet">

@@ -25,6 +25,23 @@ function getB2Client() {
   return b2Client;
 }
 const b2Bucket = () => process.env.B2_BUCKET_NAME;
+const REPORT_MEDIA_TYPES = {
+  jpg:'image/jpeg', jpeg:'image/jpeg', jpe:'image/jpeg', png:'image/png', gif:'image/gif',
+  webp:'image/webp', bmp:'image/bmp', tif:'image/tiff', tiff:'image/tiff', heic:'image/heic',
+  heif:'image/heif', avif:'image/avif', dng:'image/x-adobe-dng', mp4:'video/mp4',
+  m4v:'video/mp4', mov:'video/quicktime', qt:'video/quicktime', webm:'video/webm',
+  avi:'video/x-msvideo', mkv:'video/x-matroska', '3gp':'video/3gpp', '3g2':'video/3gpp2',
+  mts:'video/mp2t', mpeg:'video/mpeg', mpg:'video/mpeg'
+};
+function resolveReportMediaType(file) {
+  const mime = String(file?.type || '').trim().toLowerCase().split(';')[0];
+  if (/^image\//.test(mime)) return mime === 'image/jpg' ? 'image/jpeg' : mime;
+  if (/^video\//.test(mime)) return mime;
+  const name = String(file?.name || '');
+  const dot = name.lastIndexOf('.');
+  const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+  return REPORT_MEDIA_TYPES[ext] || '';
+}
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Large media payloads are accepted; practical limits are imposed by Railway/browser resources.
 app.use(express.json({ limit: '2mb' }));
@@ -204,8 +221,8 @@ app.post('/api/employee/tasks/:id/reports/upload-urls', asyncRoute(async (req, r
   if (!files.length) return res.status(400).json({ error: 'Выберите фотографии или видео' });
   const s3 = getB2Client();
   const uploads = await Promise.all(files.map(async file => {
-    const type = String(file?.type || '').toLowerCase();
-    if (!/^(image|video)\//.test(type)) throw new Error('Разрешены только фотографии и видео');
+    const type = resolveReportMediaType(file);
+    if (!type) throw new Error(`Не удалось определить формат файла «${String(file?.name || 'без названия')}». Выберите фото или видео в поддерживаемом формате.`);
     const name = String(file?.name || 'file').slice(0, 240);
     const key = `reports/${req.employeeId}/${task.id}/${randomUUID()}`;
     const command = new PutObjectCommand({ Bucket: b2Bucket(), Key: key, ContentType: type });
@@ -228,10 +245,11 @@ app.post('/api/employee/tasks/:id/reports', asyncRoute(async (req, res) => {
   if (!media.length) return res.status(400).json({ error: 'Добавьте хотя бы одну фотографию или видеозапись' });
   const s3 = getB2Client();
   const verifiedMedia = await Promise.all(media.map(async item => {
-    if (!item || typeof item.key !== 'string' || !item.key.startsWith(`reports/${req.employeeId}/${task.id}/`) || typeof item.type !== 'string' || !/^(image|video)\//i.test(item.type)) throw new Error('Некорректные данные вложения. Загрузите файлы повторно.');
+    const resolvedType = resolveReportMediaType(item);
+    if (!item || typeof item.key !== 'string' || !item.key.startsWith(`reports/${req.employeeId}/${task.id}/`) || !resolvedType) throw new Error('Некорректные данные вложения. Загрузите файлы повторно.');
     const head = await s3.send(new HeadObjectCommand({ Bucket: b2Bucket(), Key: item.key }));
     if (!head.ContentLength) throw new Error('Одно из вложений не найдено в хранилище. Повторите загрузку.');
-    return { key: item.key, type: item.type, name: String(item.name || 'file').slice(0, 240), size: head.ContentLength };
+    return { key: item.key, type: resolvedType, name: String(item.name || 'file').slice(0, 240), size: head.ContentLength };
   }));
   const latest = await prisma.taskReport.findFirst({ where: { taskId: task.id, employeeId: req.employeeId }, orderBy: { createdAt: 'desc' } });
   if (latest?.status === 'На проверке' || latest?.status === 'Принят') return res.status(409).json({ error: 'Отчёт уже находится на проверке или принят' });
