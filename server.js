@@ -268,8 +268,8 @@ app.post('/api/employee/tasks/:id/reports', asyncRoute(async (req, res) => {
     // подтверждает, что файл действительно был загружен с нашим API secret.
     if (typeof item.public_id === 'string') {
       requireCloudinary();
-      const expectedPrefix = `reports/${req.employeeId}/${task.id}/${resourceType}/`;
       const resourceType = resolvedType.startsWith('video/') ? 'video' : 'image';
+      const expectedPrefix = `reports/${req.employeeId}/${task.id}/${resourceType}/`;
       if (!item.public_id.startsWith(expectedPrefix) || item.resource_type !== resourceType ||
           !Number.isInteger(Number(item.version)) || !/^https:\/\/res\.cloudinary\.com\//.test(String(item.secure_url || ''))) {
         throw new Error('Некорректные данные Cloudinary. Загрузите файлы повторно.');
