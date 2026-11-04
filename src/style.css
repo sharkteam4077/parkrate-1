@@ -399,3 +399,30 @@
 .admin-task-controls select{max-width:190px;min-width:145px}
 @media(max-width:850px){.admin-task-details{grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.admin-task-controls{grid-column:1/-1;justify-content:space-between!important}}
 @media(max-width:520px){.admin-task-card{padding:14px}.admin-task-title-row{align-items:flex-start;flex-direction:column;gap:8px}.admin-task-details{grid-template-columns:1fr 1fr}.admin-task-controls{grid-column:1/-1}.admin-task-controls select{min-width:0;max-width:calc(100% - 90px);flex:1}}
+
+/* Dark-theme task status control: match the ParkRight interface */
+.admin-task-controls select{
+  appearance:none;
+  -webkit-appearance:none;
+  min-height:36px;
+  max-width:190px;
+  min-width:145px;
+  padding:0 34px 0 12px;
+  border:1px solid #35445b;
+  border-radius:9px;
+  outline:none;
+  color:#dce8fb;
+  background-color:#202b3d;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2395a9c7' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;
+  background-position:right 11px center;
+  font:600 11px/1.2 inherit;
+  cursor:pointer;
+  transition:border-color .18s,background-color .18s,box-shadow .18s;
+}
+.admin-task-controls select:hover{border-color:#52739e;background-color:#25344a}
+.admin-task-controls select:focus{border-color:#1688f8;box-shadow:0 0 0 3px rgba(22,136,248,.16)}
+.admin-task-controls select option{color:#dce8fb;background:#182233}
+@media(max-width:520px){
+  .admin-task-controls select{min-width:0;max-width:calc(100% - 90px);flex:1}
+}
