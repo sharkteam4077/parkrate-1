@@ -297,19 +297,16 @@ app.patch('/api/employee/payment-requests/:id/requisites', asyncRoute(async (req
   const request = await prisma.paymentRequest.findFirst({ where: { id: req.params.id, employeeId: req.employeeId } });
   if (!request) return res.status(404).json({ error: 'Запрос реквизитов не найден' });
   if (request.status !== 'Ожидает реквизиты') return res.status(409).json({ error: 'Реквизиты по этому запросу уже отправлены' });
-  const recipientName = cleanText(req.body.recipientName).slice(0, 160);
   const bankName = cleanText(req.body.bankName).slice(0, 160);
-  const accountNumber = cleanText(req.body.accountNumber).replace(/\\s+/g, '').slice(0, 64);
-  const bik = cleanText(req.body.bik).replace(/\\s+/g, '').slice(0, 20);
-  const correspondentAccount = cleanText(req.body.correspondentAccount).replace(/\\s+/g, '').slice(0, 64);
+  const cardNumber = cleanText(req.body.cardNumber).replace(/\D/g, '').slice(0, 19);
   const phone = cleanText(req.body.phone).slice(0, 40);
-  const comment = cleanText(req.body.comment).slice(0, 500);
-  if (!recipientName || !bankName || accountNumber.length < 8) {
-    return res.status(400).json({ error: 'Укажите ФИО получателя, банк и номер счёта или карты' });
+  const phoneDigits = phone.replace(/\D/g, '');
+  if (!bankName || cardNumber.length < 16 || phoneDigits.length < 10 || phoneDigits.length > 15) {
+    return res.status(400).json({ error: 'Укажите банк, номер карты (16–19 цифр) и корректный номер телефона' });
   }
   const updated = await prisma.paymentRequest.update({
     where: { id: request.id },
-    data: { recipientName, bankName, accountNumber, bik: bik || null, correspondentAccount: correspondentAccount || null, phone: phone || null, comment: comment || null, status: 'Реквизиты получены', submittedAt: new Date() }
+    data: { bankName, cardNumber, phone, status: 'Реквизиты получены', submittedAt: new Date() }
   });
   res.json(updated);
 }));

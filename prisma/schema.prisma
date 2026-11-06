@@ -212,6 +212,7 @@ model PaymentRequest {
   recipientName         String?
   bankName              String?
   accountNumber         String?
+  cardNumber            String?
   bik                   String?
   correspondentAccount  String?
   phone                 String?

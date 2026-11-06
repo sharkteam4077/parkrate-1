@@ -507,16 +507,29 @@
   }
 }
 
-/* Запрос и получение платёжных реквизитов */
-.payment-details-panel,.employee-payment-request{margin-top:18px;padding:18px;border:1px solid #dce5f0;border-radius:14px;background:#f8fafc}
-.payment-details-panel h3,.employee-payment-request h3{margin:0 0 5px;font-size:16px}
-.payment-details-panel .panel-head,.employee-payment-request .panel-head{margin-bottom:14px}
-.payment-details-grid,.payment-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.payment-details-grid>div{display:flex;flex-direction:column;gap:4px;min-width:0}
-.payment-details-grid small{color:#64748b;font-size:12px}
-.payment-details-grid b{overflow-wrap:anywhere;font-size:14px}
+/* Запрос и получение платёжных реквизитов — единый тёмный стиль ParkRight */
+.payment-details-panel,.employee-payment-request{margin-top:18px;padding:20px;border:1px solid #303b50;border-radius:14px;background:linear-gradient(145deg,#1b2433,#171e2b);color:#e9edf6;box-shadow:0 10px 28px #05091430}
+.payment-details-panel h3,.employee-payment-request h3{margin:0 0 5px;font-size:16px;color:#f1f4fb}
+.payment-details-panel .panel-head{margin-bottom:14px}
+.payment-details-panel .panel-head p,.employee-payment-request p{color:#91a0b8}
+.payment-details-grid,.payment-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}
+.payment-details-grid>div{display:flex;flex-direction:column;gap:5px;min-width:0;padding:12px 13px;border:1px solid #303b50;border-radius:9px;background:#121a27}
+.payment-details-grid small{color:#8291aa;font-size:10px;text-transform:uppercase;letter-spacing:.55px}
+.payment-details-grid b{overflow-wrap:anywhere;font-size:14px;color:#edf2fc}
 .payment-details-grid .full,.payment-form-grid .full{grid-column:1/-1}
-.payment-form-grid label{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600}
-.payment-form-grid input{width:100%;min-width:0;padding:10px 12px;border:1px solid #d5deea;border-radius:9px;background:#fff;font:inherit;font-weight:400}
-.employee-payment-request>.primary-btn{margin-top:14px}
-@media(max-width:640px){.payment-details-grid,.payment-form-grid{grid-template-columns:1fr}.payment-details-grid .full,.payment-form-grid .full{grid-column:auto}}
+.payment-request-heading{display:flex;align-items:center;gap:12px;margin-bottom:15px}
+.payment-request-icon{width:42px;height:42px;flex:0 0 42px;display:grid;place-items:center;border-radius:12px;color:#9ebaff;background:#233d68;border:1px solid #34568d}
+.payment-request-heading h3{font-size:16px;margin:0 0 5px}
+.payment-request-heading p{font-size:12px;line-height:1.5;margin:0;color:#91a0b8}
+.payment-request-status{margin-bottom:16px}
+.payment-form-grid label{display:flex;flex-direction:column;gap:7px;color:#c5cee0;font-size:12px;font-weight:600}
+.payment-form-grid input{width:100%;min-width:0;height:44px;padding:0 13px;border:1px solid #36445b;border-radius:9px;background:#111925;color:#f1f5fc;font:inherit;font-size:14px;font-weight:400;outline:none;transition:border-color .15s,box-shadow .15s}
+.payment-form-grid input::placeholder{color:#687890}
+.payment-form-grid input:focus{border-color:#478ff0;box-shadow:0 0 0 3px #2879e51c}
+.payment-security-note{margin:13px 0 15px;padding:10px 12px;border-radius:8px;background:#202c3d;color:#91a2bb;font-size:10px;line-height:1.55}
+.employee-payment-request>.primary-btn{height:42px;padding:0 18px;background:linear-gradient(100deg,#167be8,#0864d7);font-size:12px}
+.payment-submitted{display:flex;align-items:center;gap:12px;padding:14px;border:1px solid #285444;border-radius:10px;background:#172e2a}
+.payment-success-mark{width:30px;height:30px;flex:0 0 30px;display:grid;place-items:center;border-radius:50%;background:#245b46;color:#9ce4bf;font-weight:800}
+.payment-submitted b{color:#b9efd0;font-size:13px}
+.payment-submitted p{margin:4px 0 0;font-size:11px}
+@media(max-width:640px){.payment-details-panel,.employee-payment-request{padding:16px;margin-top:14px}.payment-details-grid,.payment-form-grid{grid-template-columns:1fr}.payment-details-grid .full,.payment-form-grid .full{grid-column:auto}.payment-request-heading{align-items:flex-start}.employee-payment-request>.primary-btn{width:100%}}
