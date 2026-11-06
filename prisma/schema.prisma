@@ -39,6 +39,7 @@ model Employee {
   activation  EmployeeActivation?
   tasks       Task[]
   taskReports TaskReport[]
+  paymentRequests PaymentRequest[]
   locationSelections LocationSelection[]
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
@@ -195,11 +196,32 @@ model TaskReport {
   reviewedAt  DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  paymentRequest PaymentRequest?
   @@index([status, createdAt])
   @@index([employeeId, createdAt])
   @@index([taskId, createdAt])
 }
 
+model PaymentRequest {
+  id                    String   @id @default(cuid())
+  reportId              String   @unique
+  report                TaskReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  employeeId            String
+  employee              Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  status                String   @default("Ожидает реквизиты")
+  recipientName         String?
+  bankName              String?
+  accountNumber         String?
+  bik                   String?
+  correspondentAccount  String?
+  phone                 String?
+  comment               String?
+  requestedAt           DateTime @default(now())
+  submittedAt           DateTime?
+  updatedAt             DateTime @updatedAt
+  @@index([employeeId, status])
+  @@index([status, requestedAt])
+}
 
 model ChatMessage {
   id         String   @id @default(cuid())

@@ -226,7 +226,7 @@ app.post('/api/employee/tasks/:id/messages', asyncRoute(async (req, res) => {
 app.get('/api/employee/tasks', asyncRoute(async (req, res) => {
   const activeEmployee = await prisma.employee.findUnique({ where: { id: req.employeeId }, select: { status: true, login: true, passwordHash: true } });
   if (!activeEmployee || activeEmployee.status !== 'Работает' || !activeEmployee.login || !activeEmployee.passwordHash) return res.status(403).json({ error: 'Доступ к кабинету приостановлен' });
-  const tasks = await prisma.task.findMany({ where: { employeeId: req.employeeId }, include: { location: true, reports: { where: { employeeId: req.employeeId }, orderBy: { createdAt: 'desc' }, take: 5 } }, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
+  const tasks = await prisma.task.findMany({ where: { employeeId: req.employeeId }, include: { location: true, reports: { where: { employeeId: req.employeeId }, include: { paymentRequest: true }, orderBy: { createdAt: 'desc' }, take: 5 } }, orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }] });
   res.json(tasks);
 }));
 app.post('/api/employee/tasks/:id/reports/upload-urls', asyncRoute(async (req, res) => {
@@ -291,6 +291,27 @@ app.post('/api/employee/tasks/:id/reports', asyncRoute(async (req, res) => {
   const report = await prisma.taskReport.create({ data: { taskId: task.id, employeeId: req.employeeId, result: 'Фото- и видеоподтверждение выполнения задания', comment: null, hoursSpent: null, latitude: hasLatitude && hasLongitude ? latitude : null, longitude: hasLatitude && hasLongitude ? longitude : null, mediaJson: JSON.stringify(verifiedMedia), status: 'На проверке' } });
   await prisma.task.update({ where: { id: task.id }, data: { status: 'На проверке', completedAt: null } });
   res.status(201).json(report);
+}));
+
+app.patch('/api/employee/payment-requests/:id/requisites', asyncRoute(async (req, res) => {
+  const request = await prisma.paymentRequest.findFirst({ where: { id: req.params.id, employeeId: req.employeeId } });
+  if (!request) return res.status(404).json({ error: 'Запрос реквизитов не найден' });
+  if (request.status !== 'Ожидает реквизиты') return res.status(409).json({ error: 'Реквизиты по этому запросу уже отправлены' });
+  const recipientName = cleanText(req.body.recipientName).slice(0, 160);
+  const bankName = cleanText(req.body.bankName).slice(0, 160);
+  const accountNumber = cleanText(req.body.accountNumber).replace(/\\s+/g, '').slice(0, 64);
+  const bik = cleanText(req.body.bik).replace(/\\s+/g, '').slice(0, 20);
+  const correspondentAccount = cleanText(req.body.correspondentAccount).replace(/\\s+/g, '').slice(0, 64);
+  const phone = cleanText(req.body.phone).slice(0, 40);
+  const comment = cleanText(req.body.comment).slice(0, 500);
+  if (!recipientName || !bankName || accountNumber.length < 8) {
+    return res.status(400).json({ error: 'Укажите ФИО получателя, банк и номер счёта или карты' });
+  }
+  const updated = await prisma.paymentRequest.update({
+    where: { id: request.id },
+    data: { recipientName, bankName, accountNumber, bik: bik || null, correspondentAccount: correspondentAccount || null, phone: phone || null, comment: comment || null, status: 'Реквизиты получены', submittedAt: new Date() }
+  });
+  res.json(updated);
 }));
 
 app.patch('/api/employee/tasks/:id', asyncRoute(async (req, res) => {
@@ -498,7 +519,7 @@ app.patch('/api/tasks/:id', asyncRoute(async (req, res) => {
 
 
 app.get('/api/reports', asyncRoute(async (req, res) => {
-  const reports = await prisma.taskReport.findMany({ include: { task: true, employee: { include: { branch: true } } }, orderBy: [{ status: 'asc' }, { createdAt: 'desc' }] });
+  const reports = await prisma.taskReport.findMany({ include: { task: true, paymentRequest: true, employee: { include: { branch: true } } }, orderBy: [{ status: 'asc' }, { createdAt: 'desc' }] });
   const s3 = b2Configured ? getB2Client() : null;
   const result = await Promise.all(reports.map(async r => {
     let media = []; try { media = JSON.parse(r.mediaJson || '[]'); } catch {}
@@ -512,6 +533,16 @@ app.get('/api/reports', asyncRoute(async (req, res) => {
   }));
   res.json(result);
 }));
+app.post('/api/reports/:id/payment-request', asyncRoute(async (req, res) => {
+  const report = await prisma.taskReport.findUnique({ where: { id: req.params.id } });
+  if (!report) return res.status(404).json({ error: 'Отчёт не найден' });
+  if (report.status !== 'Принят') return res.status(409).json({ error: 'Запросить реквизиты можно только после принятия отчёта' });
+  const existing = await prisma.paymentRequest.findUnique({ where: { reportId: report.id } });
+  if (existing) return res.status(409).json({ error: 'Запрос реквизитов уже отправлен' });
+  const request = await prisma.paymentRequest.create({ data: { reportId: report.id, employeeId: report.employeeId } });
+  res.status(201).json(request);
+}));
+
 app.patch('/api/reports/:id', asyncRoute(async (req, res) => {
   const status = cleanText(req.body.status);
   if (!['Принят', 'Требует доработки'].includes(status)) return res.status(400).json({ error: 'Выберите решение по отчёту' });

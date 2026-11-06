@@ -506,3 +506,17 @@
     justify-content: flex-start !important;
   }
 }
+
+/* Запрос и получение платёжных реквизитов */
+.payment-details-panel,.employee-payment-request{margin-top:18px;padding:18px;border:1px solid #dce5f0;border-radius:14px;background:#f8fafc}
+.payment-details-panel h3,.employee-payment-request h3{margin:0 0 5px;font-size:16px}
+.payment-details-panel .panel-head,.employee-payment-request .panel-head{margin-bottom:14px}
+.payment-details-grid,.payment-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.payment-details-grid>div{display:flex;flex-direction:column;gap:4px;min-width:0}
+.payment-details-grid small{color:#64748b;font-size:12px}
+.payment-details-grid b{overflow-wrap:anywhere;font-size:14px}
+.payment-details-grid .full,.payment-form-grid .full{grid-column:1/-1}
+.payment-form-grid label{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600}
+.payment-form-grid input{width:100%;min-width:0;padding:10px 12px;border:1px solid #d5deea;border-radius:9px;background:#fff;font:inherit;font-weight:400}
+.employee-payment-request>.primary-btn{margin-top:14px}
+@media(max-width:640px){.payment-details-grid,.payment-form-grid{grid-template-columns:1fr}.payment-details-grid .full,.payment-form-grid .full{grid-column:auto}}
